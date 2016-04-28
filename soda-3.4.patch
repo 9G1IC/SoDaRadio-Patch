@@ -1,0 +1,2365 @@
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/gui/adjust_GUI.sh soda-3.4.1/gui/adjust_GUI.sh
+--- soda-3.4/gui/adjust_GUI.sh	2015-01-16 09:52:59.000000000 +0000
++++ soda-3.4.1/gui/adjust_GUI.sh	2016-04-27 14:22:54.389500772 +0000
+@@ -7,7 +7,7 @@
+ echo "#include \"downarrow.xpm\"" >> temporary_junk.cpp
+ echo "#include \"SoDaLogo_Big.xpm\"" >> temporary_junk.cpp
+
+-cat temporary_junk.cpp ../../gui/SoDaRadio_GUI.cpp > temporary_junk2.cpp
++cat temporary_junk.cpp ../gui/SoDaRadio_GUI.cpp > temporary_junk2.cpp
+
+ sed -e 's/wxT("downarrow.png"), wxBITMAP_TYPE_ANY/downarrow_xpm/g' < temporary_junk2.cpp |  \
+   sed -e 's/wxT("SoDaLogo_Big.png"), wxBITMAP_TYPE_ANY/SoDaLogo_Big_xpm/g' | \
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/gui/GuiParams.cxx soda-3.4.1/gui/GuiParams.cxx
+--- soda-3.4/gui/GuiParams.cxx	2014-11-29 01:36:02.000000000 +0000
++++ soda-3.4.1/gui/GuiParams.cxx	2016-04-27 14:22:54.389500772 +0000
+@@ -48,8 +48,7 @@
+      "Log filename")
+     ("debug", po::value<unsigned int>(&debug_level)->default_value(0)->implicit_value(1),
+      "Enable debug messages for value > 0.  Higher values may produce more detail.")
+-    ;
+-
++    ("with-tracking", "Enable autotuning with gpredict or any Hamlib compliant tracker. Please install 'socat' for this functionality"); 
+   po::store(po::parse_command_line(argc, argv, desc), pmap);
+   po::notify(pmap);
+
+@@ -58,6 +57,13 @@
+     std::cout << "SoDa -- The 'SoD' stands for Software Defined. The 'a' doesn't stand for anything.   " << desc << std::endl;
+     exit(-1); 
+   }
++  else
++if(pmap.count("with-tracking")){
++	std::cerr << "*******************************IMPORTANT*****************************************************************"<<std::endl;
++	std::cerr <<"SoDa is enabled with tracking. Please make sure you have 'socat' installed and run the following command: " << std::endl
++		<< "'socat TCP-LISTEN:4532 UNIX-CONNECT:/tmp/SoDa_tracker &' " << std::endl << "Before running gpredict "<< std::endl; std::cerr << "*******************************IMPORTANT*****************************************************************"<<std::endl;
++	with_tracking = true;
++}	
+ }
+
+ char ** SoDa::GuiParams::convertWXargs2Cargs(int argc, wxChar ** argv)
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/gui/GuiParams.hxx soda-3.4.1/gui/GuiParams.hxx
+--- soda-3.4/gui/GuiParams.hxx	2014-11-29 01:36:02.000000000 +0000
++++ soda-3.4.1/gui/GuiParams.hxx	2016-04-27 14:22:54.389500772 +0000
+@@ -44,11 +44,13 @@
+     std::string getConfigFileName() { return config_filename; }
+     std::string getUHDArgs() { return uhd_args; }
+     unsigned int getDebugLevel() { return debug_level; }
++    bool withtracking() {with_tracking=true; return with_tracking; }
+   private:
+     // this is really quite gross -- wxApp is not very nice about this. 
+     char ** convertWXargs2Cargs(int argc, wxChar ** argv);
+     
+     boost::program_options::variables_map pmap;
++   	bool with_tracking;
+
+     std::string server_name;     ///< Where do we find the server?
+     // message socket params
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/gui/Makefile.am soda-3.4.1/gui/Makefile.am
+--- soda-3.4/gui/Makefile.am	2014-11-29 01:36:02.000000000 +0000
++++ soda-3.4.1/gui/Makefile.am	2016-04-27 14:22:54.389500772 +0000
+@@ -15,7 +15,7 @@
+
+ bin_PROGRAMS = SoDaRadio
+
+-SoDaRadio_SOURCES = SoDaRadio_App.cxx SoDaRadio_GUI.cxx  SoDaRadio_Top.cxx SoDaRadio_Top_Events.cxx SoDaRadio_Top_Config.cxx ../src/UDSockets.cxx ../src/Command.cxx Navigation.cxx dem-gridlib.c xyplot.cxx RadioListenerThread.cxx GuiParams.cxx waterfall.cxx dem-gridlib.h GuiParams.hxx Navigation.hxx RadioListenerThread.hxx SoDaRadio_App.hxx SoDaRadio_GUI.h SoDaRadio_Top.h TunerDigit.hxx waterfall.hxx xyplot.hxx FindHome.hxx FindHome.cxx Default.soda_cfg.h SoDaRadio_Band.hxx ../src/Debug.hxx ../src/Debug.cxx
++SoDaRadio_SOURCES = SoDaRadio_App.cxx SoDaRadio_GUI.cxx  SoDaRadio_Top.cxx SoDaRadio_Top_Events.cxx SoDaRadio_Top_Config.cxx ../src/UDSockets.cxx ../src/Command.cxx Navigation.cxx dem-gridlib.c xyplot.cxx RadioListenerThread.cxx GuiParams.cxx waterfall.cxx dem-gridlib.h GuiParams.hxx Navigation.hxx RadioListenerThread.hxx SoDaRadio_App.hxx SoDaRadio_GUI.h SoDaRadio_Top.h TunerDigit.hxx waterfall.hxx xyplot.hxx FindHome.hxx FindHome.cxx Default.soda_cfg.h SoDaRadio_Band.hxx ../src/Debug.hxx ../src/Debug.cxx ../src/Tracker.cxx
+
+ SoDaRadio_CPPFLAGS = $(AM_CPPFLAGS) $(WX_CPPFLAGS) 
+ SoDaRadio_LDADD = $(AM_BOOSTLIBFLAGS) $(WX_LIBS)
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/gui/RadioListenerThread.cxx soda-3.4.1/gui/RadioListenerThread.cxx
+--- soda-3.4/gui/RadioListenerThread.cxx	2014-11-30 02:13:12.000000000 +0000
++++ soda-3.4.1/gui/RadioListenerThread.cxx	2016-04-27 14:22:54.389500772 +0000
+@@ -55,6 +55,11 @@
+
+   }
+
++
++
++
++
++
+   void RadioListenerThread::setupFreqBuffer()
+   {
+     int i;
+@@ -66,6 +71,12 @@
+     }
+   }
+
++
++
++
++
++
++
+   void RadioListenerThread::setupSpectrumDisplay()
+   {
+     if((spect_buflen == 0) ||
+@@ -73,15 +84,11 @@
+        (spectrum_low_freq == 0.0) || 
+        (spectrum_hi_freq == 0.0))
+       return;
+-
+     if(old_spect_buflen != spect_buflen) {
+       freq_buffer = new double[spect_buflen]; 
+       spect_buffer = new float[spect_buflen];
+     }
+-
+-
+     setupFreqBuffer();
+-  
+     // now setup the vectors for the spectrum plots.
+     if(old_spect_buflen != spect_buflen) {
+       while(!radio_gui->CreateSpectrumTrace(freq_buffer, spect_buffer, spect_buflen)) {
+@@ -91,13 +98,17 @@
+       }
+       old_spect_buflen = spect_buflen; 
+     }
+-  }
++}
++
++
++
++
+
+-  void * RadioListenerThread::Entry()
++
++void * RadioListenerThread::Entry()
+   {
+     // setup a trap handler for segsegv so we know when it happens.
+     hookSigSeg();
+-    
+     //listen on the gui's command queue and on the fft queue.
+     exitflag = false;
+
+@@ -115,7 +126,6 @@
+     while(!exitflag) {
+       bool didwork = false;
+       dbgctr++; 
+-	  
+       int stat = cmd_q->get(ncmd, sizeof(SoDa::Command));
+       if(stat > 0) {
+ 	if(ncmd->cmd == SoDa::Command::REP) execRepCommand(ncmd);
+@@ -131,11 +141,25 @@
+ 	  radio_gui->pendEvent(event); 
+ 	  didwork = true;
+ 	  specctr++; 
++	  //Needed to have a smooth waterfall: Only update when the spectrum is ready
++	  radio_gui->tracker->updateSpectrum=true;
+ 	}
+ 	else if(stat < 0) {
+ 	  std::cerr << "Error reading fft q." << std::endl; 
+ 	}
+       }
++    if(radio_gui->tracker->isReady())	  
++		{
++			//Read the data in the socket 
++			radio_gui->tracker->socketGetTracker();
++			//Send an event
++			radio_gui->triggerTracker();
++			//Reset updateSpectrum
++			radio_gui->tracker->updateSpectrum=false;
++			didwork = true;
++
++
++		}
+       if(!didwork) {
+ 	wxThread::Sleep(100);
+       }
+@@ -151,6 +175,15 @@
+     return NULL; 
+   }
+
++
++
++
++
++
++
++
++
++
+   void RadioListenerThread::execRepCommand(SoDa::Command * cmd)
+   {
+     bool check_buf_setup = false; 
+@@ -194,7 +227,7 @@
+     case SoDa::Command::TX_CW_MARKER:
+       {
+ 	wxCommandEvent event(wxEVT_COMMAND_MENU_SELECTED,
+-			     SoDaRadio_Top::MSG_TERMINATE_TX);
++     SoDaRadio_Top::MSG_TERMINATE_TX);
+ 	radio_gui->pendEvent(event); 
+       }
+       break;
+@@ -214,5 +247,10 @@
+     if(check_buf_setup) {
+       setupSpectrumDisplay();
+     }
+-  }
++}
++
++
++
++
++
+ }
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/gui/RadioListenerThread.hxx soda-3.4.1/gui/RadioListenerThread.hxx
+--- soda-3.4/gui/RadioListenerThread.hxx	2015-01-14 04:03:45.000000000 +0000
++++ soda-3.4.1/gui/RadioListenerThread.hxx	2016-04-27 14:22:54.389500772 +0000
+@@ -36,7 +36,6 @@
+ #include <stdio.h>
+ #include <unistd.h>
+ }
+-
+ #include <wx/wx.h>
+ #include <wx/thread.h>
+
+@@ -65,7 +64,6 @@
+     void execRepCommand(SoDa::Command * cmd);
+
+     bool exitflag; // Set to true when we want to terminate the application
+-    
+     SoDaRadio_Top * radio_gui;
+     SoDa::UD::ClientSocket * cmd_q, * fft_q; 
+     float * spect_buffer;
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/gui/SoDaRadio_Top.cxx soda-3.4.1/gui/SoDaRadio_Top.cxx
+--- soda-3.4/gui/SoDaRadio_Top.cxx	2015-01-14 04:49:44.000000000 +0000
++++ soda-3.4.1/gui/SoDaRadio_Top.cxx	2016-04-27 14:22:54.389500772 +0000
+@@ -60,9 +60,8 @@
+    * @li the wxWidgets GUI event loop that dispatches user requests
+    * through the SoDaRadio_Top thread.
+    */
+-  SoDaRadio_Top::SoDaRadio_Top( SoDa::GuiParams & params,  wxWindow* parent )
+-:
+-    SoDaRadioFrame( parent ), SoDa::Debug("SoDaRadio_Top")
++    wxDEFINE_EVENT(wxEVT_TRACKER_UPDATE,wxCommandEvent);
++  SoDaRadio_Top::SoDaRadio_Top( SoDa::GuiParams & params,  wxWindow* parent ) : SoDaRadioFrame( parent ), SoDa::Debug("SoDaRadio_Top")
+   {
+     // init all pointers to NULL;
+     pgram_plot = NULL;
+@@ -75,7 +74,7 @@
+     spect_config = NULL;
+     listener = NULL;
+     config_tree_alloc = config_tree = NULL; 
+-    
++    with_tracking = params.withtracking(); 
+     // revision string is initially empty
+     SDR_version_string[0] = '\000';
+
+@@ -156,18 +155,15 @@
+     debugMsg("About to create the spectrum configuration dialog.\n");
+     // setup the spectrum configuration dialog
+     spect_config = new SpectConfigDialog(this, this);
+-
+     // setup the client socket trying once every second for 60 seconds before we give up
+     soda_radio = new SoDa::UD::ClientSocket(sock_basename + "_cmd", 60);
+     soda_fft = new SoDa::UD::ClientSocket(sock_basename + "_wfall", 60);
+-
++    tracker = new SoDa::TRACKER::TrackerSocket(sock_basename + "_tracker");
+     // create the listener thread
+     debugMsg("Creating listener thread.");
+     listener = new RadioListenerThread(this);
+-
+     // what is the default button background color? 
+     default_button_bg_color = m_PTT->GetBackgroundColour();
+-  
+     // set the initial radio state
+     tx_on = false;
+     cw_mode = false;
+@@ -231,19 +227,14 @@
+
+   
+     // Now connect up a few events
+-    Connect(MSG_UPDATE_SPECTRUM, wxEVT_COMMAND_MENU_SELECTED,
+-	    wxCommandEventHandler(SoDaRadio_Top::OnUpdateSpectrumPlot));
+-    Connect(MSG_UPDATE_GPSLOC, wxEVT_COMMAND_MENU_SELECTED, 
+-	    wxCommandEventHandler(SoDaRadio_Top::OnUpdateGPSLoc));
+-    Connect(MSG_UPDATE_GPSTIME, wxEVT_COMMAND_MENU_SELECTED,
+-	    wxCommandEventHandler(SoDaRadio_Top::OnUpdateGPSTime));
+-    Connect(MSG_TERMINATE_TX, wxEVT_COMMAND_MENU_SELECTED,
+-	    wxCommandEventHandler(SoDaRadio_Top::OnTerminateTX));
+-    Connect(MSG_UPDATE_MODELNAME, wxEVT_COMMAND_MENU_SELECTED,
+-	    wxCommandEventHandler(SoDaRadio_Top::OnUpdateModelName));
+-    Connect(MSG_UPDATE_ANTNAME, wxEVT_COMMAND_MENU_SELECTED,
+-	    wxCommandEventHandler(SoDaRadio_Top::OnUpdateAntName));
+-
++    Connect(MSG_UPDATE_SPECTRUM, wxEVT_COMMAND_MENU_SELECTED, wxCommandEventHandler(SoDaRadio_Top::OnUpdateSpectrumPlot));
++    Connect(MSG_UPDATE_GPSLOC, wxEVT_COMMAND_MENU_SELECTED, wxCommandEventHandler(SoDaRadio_Top::OnUpdateGPSLoc));
++    Connect(MSG_UPDATE_GPSTIME, wxEVT_COMMAND_MENU_SELECTED, wxCommandEventHandler(SoDaRadio_Top::OnUpdateGPSTime));
++    Connect(MSG_TERMINATE_TX, wxEVT_COMMAND_MENU_SELECTED, wxCommandEventHandler(SoDaRadio_Top::OnTerminateTX));
++    Connect(MSG_UPDATE_MODELNAME, wxEVT_COMMAND_MENU_SELECTED, wxCommandEventHandler(SoDaRadio_Top::OnUpdateModelName));
++    Connect(MSG_UPDATE_ANTNAME, wxEVT_COMMAND_MENU_SELECTED, wxCommandEventHandler(SoDaRadio_Top::OnUpdateAntName));
++    //Handle tracking
++    Connect(TRACKER_UPDATE,wxEVT_TRACKER_UPDATE,wxCommandEventHandler(SoDaRadio_Top::OnTrack));
+     
+     
+     // setup status bar -- hardwire the accelerators for now.
+@@ -318,10 +309,27 @@
+
+     return s;
+   }
+-
++  void SoDaRadio_Top::triggerTracker(){
++//Need to prevent overflow and freeze of the gui
++	  if(this->tracker->guiIsReady == true && this->tracker->updateSpectrum){
++			wxCommandEvent event(wxEVT_TRACKER_UPDATE);
++			pendEvent(event);//trigger the tracker event
++			usleep(this->tracker->delay);
++		  }
++  }
++  void SoDaRadio_Top::UpdateTracker(){
++//Need to prevent overflow and freeze of the gui
++    this->tracker->guiIsReady=false;
++// update the rx frequency field and all display markers.
++    UpdateRXFreq(tracker->updateRadio->rxfreq);
++    UpdateTXFreq(tracker->updateRadio->txfreq);
++//Need to prevent overflow and freeze of the gui
++    this->tracker->guiIsReady=true;
++  }
+   void SoDaRadio_Top::UpdateRXFreq(double freq)
+   {
+     // update the rx frequency field and all display markers.
++    wxMutexLocker lock(ctrl_mutex);
+     rx_frequency = freq;
+
+     // update the tuner
+@@ -350,6 +358,7 @@
+   void SoDaRadio_Top::UpdateTXFreq(double freq)
+   {
+     // update the tx frequency field and all display markers.
++    wxMutexLocker lock(ctrl_mutex);
+     tx_frequency = freq;
+
+     // update the tuner
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/gui/SoDaRadio_Top_Events.cxx soda-3.4.1/gui/SoDaRadio_Top_Events.cxx
+--- soda-3.4/gui/SoDaRadio_Top_Events.cxx	2015-01-14 03:28:29.000000000 +0000
++++ soda-3.4.1/gui/SoDaRadio_Top_Events.cxx	2016-04-27 14:22:54.389500772 +0000
+@@ -38,6 +38,12 @@
+
+ namespace SoDaRadio_GUI {
+   
++	void SoDaRadio_Top::OnTrack(wxCommandEvent &event)
++	{
++		//Handle the tracking event
++	 UpdateTracker();
++
++	}
+   void SoDaRadio_Top::OnAbout( wxCommandEvent& event )
+   {
+     AboutDialog * ad = new AboutDialog(this, SDR_version_string);
+@@ -1084,19 +1090,27 @@
+
+   void SoDaRadio_Top::SetRXFreqFromDisp(double freq)
+   {
++	if(with_tracking)
++    { 
++	    this->tracker->updateRadio->fromDisplay = true;
++	    this->tracker->updateRadio->fromDisplayFreq = freq;
++	    //UpdateCenterFreq(freq);
++    }   
+     last_rx_frequency = rx_frequency;
+     // adjust freq based on mode
+     if(cw_mode) {
+       // if we're upper sideband, depress the freq.... 
+       freq = freq + (cw_upper ? -500.0 : 500.0); 
+     }
+-  
+-    UpdateRXFreq(freq);
++  UpdateRXFreq(freq);
+     tuner->newRXFreq();
+     if(tx_rx_locked) {
+       UpdateTXFreq(freq);
+     }
+-  }
++
++
++  
++    }
+
+   void SoDaRadio_Top::UpdateNavigation()
+   {
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/gui/SoDaRadio_Top.h soda-3.4.1/gui/SoDaRadio_Top.h
+--- soda-3.4/gui/SoDaRadio_Top.h	2015-01-14 02:13:30.000000000 +0000
++++ soda-3.4.1/gui/SoDaRadio_Top.h	2016-04-27 14:22:54.389500772 +0000
+@@ -41,6 +41,7 @@
+ #include "../src/UDSockets.hxx"
+ #include "../src/Command.hxx"
+ #include "../src/Debug.hxx"
++#include "../src/Tracker.hxx"
+ #include <map>
+ #include <fstream>
+ #include <boost/property_tree/ptree.hpp>
+@@ -52,6 +53,8 @@
+ #include <wx/string.h>
+ #include <wx/wxchar.h>
+ #include <wx/thread.h>
++#include <wx/event.h>
++
+
+ namespace SoDaRadio_GUI {
+   
+@@ -74,6 +77,7 @@
+    * @li the wxWidgets GUI event loop that dispatches user requests
+    * through the SoDaRadio_Top thread.
+    */
++    wxDECLARE_EVENT(wxEVT_TRACKER_UPDATE,wxCommandEvent);
+   class SoDaRadio_Top : public SoDaRadioFrame, public SoDa::Debug
+   {
+     friend class TuningDialog;
+@@ -163,9 +167,15 @@
+     void sendCWText( const wxString & cwstr, int repeat_count = 1, bool append_cr = true);
+     void sendCWMarker(int marker_id); 
+
++  public:
++    SoDa::TRACKER::TrackerSocket * tracker;
++    void OnTrack(wxCommandEvent & event);
++    void UpdateTracker();
++    bool with_tracking;
++    void triggerTracker();
++
+     void UpdateRXFreq(double freq);
+     void UpdateTXFreq(double freq);
+-  public:
+
+     double GetLOMult() { return lo_multiplier; }
+     void SetLOMult(double v) { lo_multiplier = v; }
+@@ -178,7 +188,7 @@
+     wxString getModeString() { return m_ModeBox->GetStringSelection(); }
+
+     // message types. 
+-    enum MSG_ID { MSG_UPDATE_SPECTRUM, MSG_HANDLE_CMD, MSG_UPDATE_GPSLOC, MSG_UPDATE_GPSTIME, MSG_TERMINATE_TX, MSG_UPDATE_MODELNAME, MSG_UPDATE_ANTNAME };
++    enum MSG_ID {TRACKER_UPDATE, MSG_UPDATE_SPECTRUM, MSG_HANDLE_CMD, MSG_UPDATE_GPSLOC, MSG_UPDATE_GPSTIME, MSG_TERMINATE_TX, MSG_UPDATE_MODELNAME, MSG_UPDATE_ANTNAME };
+     /** Constructor */
+     SoDaRadio_Top( SoDa::GuiParams & parms, wxWindow* parent );
+     // plot maintenance
+@@ -196,6 +206,8 @@
+     SoDa::UD::ClientSocket * GetCmdQueue() { return soda_radio; }
+     SoDa::UD::ClientSocket * GetFFTQueue() { return soda_fft; }
+
++
++
+     bool CreateSpectrumTrace(double * freqs, float * powers, unsigned int len);
+
+     void setLOOffset(double v);
+@@ -408,6 +420,7 @@
+
+     // Comm socket to SoDa radio server.
+     SoDa::UD::ClientSocket * soda_radio, * soda_fft;
++
+     void sendMsg(const SoDa::Command * cmd) {
+       soda_radio->put(cmd, sizeof(SoDa::Command));
+     }
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/gui/SoDa.soda_log soda-3.4.1/gui/SoDa.soda_log
+--- soda-3.4/gui/SoDa.soda_log	1970-01-01 00:00:00.000000000 +0000
++++ soda-3.4.1/gui/SoDa.soda_log	2016-04-27 14:22:54.389500772 +0000
+@@ -0,0 +1 @@
++foo
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/src/Makefile.am soda-3.4.1/src/Makefile.am
+--- soda-3.4/src/Makefile.am	2014-11-29 01:36:01.000000000 +0000
++++ soda-3.4.1/src/Makefile.am	2016-04-27 14:22:54.401500772 +0000
+@@ -4,7 +4,7 @@
+
+ bin_PROGRAMS = SoDaServer
+
+-SoDaServer_SOURCES = Params.cxx  SoDaServer.cxx SoDaBase.cxx USRPCtrl.cxx USRPRX.cxx USRPTX.cxx CWTX.cxx AudioRX.cxx AudioTX.cxx UI.cxx Command.cxx OSFilter.cxx HilbertTransformer.cxx  ReSampler.cxx ReSamplers625x48.cxx Spectrogram.cxx CWGenerator.cxx TSIP.cxx GPS_TSIPmon.cxx UDSockets.cxx AudioRX.hxx AudioTX.hxx Command.hxx CWGenerator.hxx CWTX.hxx GPS_TSIPmon.hxx HilbertTransformer.hxx IPSockets.hxx  MultiMBox.hxx OSFilter.hxx Params.hxx QuadratureOscillator.hxx ReSampler.hxx ReSamplers625x48.hxx SoDaBase.hxx SoDa_filter_tables.hxx SoDa_tx_filter_tables.hxx Spectrogram.hxx TSIP.hxx UDSockets.hxx UI.hxx USRPCtrl.hxx USRPRX.hxx USRPTX.hxx  AudioALSA.hxx AudioALSA.cxx AudioIfc.hxx MedianFilter.hxx AudioPA.hxx AudioPA.cxx Debug.hxx Debug.cxx RangeMap.hxx
++SoDaServer_SOURCES = Params.cxx  SoDaServer.cxx SoDaBase.cxx USRPCtrl.cxx USRPRX.cxx USRPTX.cxx CWTX.cxx AudioRX.cxx AudioTX.cxx UI.cxx Command.cxx OSFilter.cxx HilbertTransformer.cxx  ReSampler.cxx ReSamplers625x48.cxx Spectrogram.cxx CWGenerator.cxx TSIP.cxx GPS_TSIPmon.cxx UDSockets.cxx AudioRX.hxx AudioTX.hxx Command.hxx CWGenerator.hxx CWTX.hxx GPS_TSIPmon.hxx HilbertTransformer.hxx IPSockets.hxx  MultiMBox.hxx OSFilter.hxx Params.hxx QuadratureOscillator.hxx ReSampler.hxx ReSamplers625x48.hxx SoDaBase.hxx SoDa_filter_tables.hxx SoDa_tx_filter_tables.hxx Spectrogram.hxx TSIP.hxx UDSockets.hxx UI.hxx USRPCtrl.hxx USRPRX.hxx USRPTX.hxx  AudioALSA.hxx AudioALSA.cxx AudioIfc.hxx MedianFilter.hxx AudioPA.hxx AudioPA.cxx Debug.hxx Debug.cxx RangeMap.hxx Tracker.cxx Tracker.hxx
+
+ SoDaServer_CPPFLAGS = $(AM_CPPFLAGS)  -g
+ SoDaServer_LDADD = $(AM_BOOSTLIBFLAGS)  -lrt
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/src/SoDaServer.cxx soda-3.4.1/src/SoDaServer.cxx
+--- soda-3.4/src/SoDaServer.cxx	2014-11-29 16:11:29.000000000 +0000
++++ soda-3.4.1/src/SoDaServer.cxx	2016-04-27 14:22:54.401500772 +0000
+@@ -178,7 +178,7 @@
+   SoDa::CWTX cwtx(&params, &cwtxt_stream, &cw_env_stream, &cmd_stream); 
+   
+   /// doWork creates the user interface (UI) thread @see SoDa::UI
+-  SoDa::UI ui(&params, &cwtxt_stream, &rx_stream, &if_stream, &cmd_stream, &gps_stream);
++  SoDa::UI ui(&params, &cwtxt_stream, &rx_stream, &if_stream, &cmd_stream, &gps_stream);//Include tracker stream to UI
+
+   SoDa::GPS_TSIPmon gps(&params, &gps_stream); 
+
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/src/Tracker.cxx soda-3.4.1/src/Tracker.cxx
+--- soda-3.4/src/Tracker.cxx	1970-01-01 00:00:00.000000000 +0000
++++ soda-3.4.1/src/Tracker.cxx	2016-04-27 14:22:54.401500772 +0000
+@@ -0,0 +1,306 @@
++#include "Tracker.hxx"
++double SoDa::TRACKER::_RadioCommand::rxfreq=145000000;
++double SoDa::TRACKER::_RadioCommand::txfreq=145000000;
++double SoDa::TRACKER::_RadioCommand::fromDisplayFreq=145000000;
++SoDa::TRACKER::TrackerTune * tuner = new SoDa::TRACKER::TrackerTune();
++SoDa::TRACKER::RadioCommand * rc= new SoDa::TRACKER::RadioCommand();
++
++//Garbage colletion
++SoDa::TRACKER::TrackerSocket::~TrackerSocket(){
++unlink(track_path.c_str());//track as in another name for path
++close(track_socket);
++delete rc;
++delete tuner;
++delete updateRadio;
++}
++
++SoDa::TRACKER::TrackerSocket::TrackerSocket(const std::string &path)
++
++{
++int  stat = -1;
++this->warned=false;//Make the warning stop recurring
++this->frequencyDirty=false;//Switch for showing frequency
++this->guiIsReady=true;
++this->delay=200;
++this->updateSpectrum=false;
++//Create the socket
++track_socket = socket(AF_UNIX,SOCK_STREAM,0);
++
++  if(track_socket < 0) {
++    std::cerr << std::endl << "Error:  I failed to create tracker socket... I quit." ;
++    exit(-1); 
++  }else {
++//Prepare the socket for io
++  int x = fcntl(track_socket, F_GETFL, 0);
++  fcntl(track_socket, F_SETFL, x | O_NONBLOCK);
++//clear the track server
++  bzero((char*) &track_server, sizeof(track_server));
++//Initialize the socket
++track_server.sun_family = AF_UNIX;
++ strncpy(track_server.sun_path, path.c_str(), sizeof(track_server.sun_path));
++//Delete the file if its already exists
++  if(!unlink(track_server.sun_path))
++  std::cerr << std::endl << "Deleted existing copy of server" ;
++  //Bind to the socket
++if(bind(track_socket,(struct sockaddr *) &track_server, sizeof(struct sockaddr_un))<0){
++	std::cerr << std::endl << "Error: Binding stream socket ["<< errno << "]"<<std::endl;
++	    close(track_msgsock);
++	    close(track_socket);
++	exit(-1);
++}
++else{
++//OnBind()
++std::cerr << std::endl << "Bound to server: " << track_server.sun_path ;
++stat=listen(track_socket,5);
++  if(stat < 0) {
++    std::cerr << std::endl << "Error:  I couldn't listen on Unix socket  " << path << " got " << errno << " I quit." ; 
++    exit(-1); 
++  }else std::cerr << std::endl << "Success: I am now listening on : " << path ;
++}
++tReady =false;
++}
++}
++ 
++
++bool SoDa::TRACKER::TrackerSocket::isReady()
++{
++  if(tReady) return true;
++  else {
++	track_client_addr_size = sizeof(track_server);
++track_msgsock = accept(track_socket,(struct sockaddr *) &track_server,&track_client_addr_size);
++if(track_msgsock < 0)
++{	
++	if(!warned){
++	tReady =false;
++perror("Error: Accept stream message:");
++std::cerr << std::endl << "WARNING: Please run this command in terminal first: 'socat TCP-LISTEN:4532 UNIX-CONNECT:/tmp/SoDa__tracker &'" <<std::endl <<"Then engage me from gpredict" <<std::endl;
++warned=true;
++}
++}
++    else {
++	//Prepare the socket for reading
++      int x = fcntl(track_msgsock, F_GETFL, 0);
++      fcntl(track_msgsock,F_SETFL, x | O_NONBLOCK);
++      tReady = true; 
++std::cerr << std::endl << "CONNECTED" ;
++    }
++  }
++  return tReady; 
++}
++
++
++
++
++void SoDa::TRACKER::TrackerSocket::socketGetTracker()
++{
++//return string
++std::string messageFromTracker;
++int stat =0;
++unsigned int rsize=0;
++//Clear the track_buf 
++bzero(track_buf, sizeof(track_buf));
++	//Start reading
++	track_rval = read(track_msgsock,&track_buf,sizeof(track_buf)); 
++	if(track_rval < 0){
++		if( (errno == EWOULDBLOCK) || (errno == EAGAIN))
++			{
++				//continue;
++			}
++		else{
++			perror("Oops -- socket get --: socketGetTracker"); 
++			exit(-1);
++		}
++	}
++
++if(track_rval > 0)//Send received data or send RPT 0
++{
++	//save the buff
++messageFromTracker.append(track_buf);
++//Results of tacker
++updateRadio=rc;
++//Parse data
++tuner->getParser(messageFromTracker,rc,this);
++}
++}
++
++
++
++//
++//used to reply gpredict
++int SoDa::TRACKER::TrackerSocket::socketSetTracker(const void * response)
++{
++int stat=0;
++char* resp = (char *)response;
++//Prepare the socket for reading
++ int x = fcntl(track_msgsock, F_GETFL, 0);
++ fcntl(track_msgsock,F_SETFL, x | O_NONBLOCK);
++if(track_msgsock > 0)
++	{
++		//Write to track_msgsock
++stat = write(track_msgsock,resp,sizeof(resp)+1);
++}
++else {
++	perror("I can not write to 'track_msgsock'"); exit(-1); }
++return stat;
++}
++//
++
++	
++
++
++
++
++void SoDa::TRACKER::TrackerTune::getParser(std::string command,RadioCommand *radio_tuner, TrackerSocket *trackerSocket)
++{
++	//Command extraction
++cmdSize=2;
++inputCmdSize=command.size();
++newLine = command.find_first_of('\n');
++if(newLine > inputCmdSize)//You just need this
++	newLine = inputCmdSize;
++
++cmds[0] = command.substr(0,newLine);
++if(newLine < inputCmdSize)
++cmds[1] = command.substr(newLine);//Remove new line
++
++//End Command extraction 
++
++for(int j=0; j<cmdSize;j++){
++	
++	std::string cmd = cmds[j].c_str();//loop through command
++	if(!cmd.empty()){
++std::string cmdList="FfMmIiXxSsNnLlUuPpGgAaRrOoCcDdVvTtEeHhBbJjZzYyQq";
++//Set response
++//Filter out the command
++std::size_t found = cmdList.find_first_of(cmd[0]);
++//Debug above filter
++//std::cerr << std::endl << "Found command: " << found ;
++//Filter the frequency
++std::size_t pos = cmd.find_last_of(" ");//find the last space from the end
++std::string value="",variable="";
++if(pos <= cmd.size()){//sometimes the value of pos can be very large
++ value = cmd.substr(pos);//get value portion
++ variable = cmd.substr(0,pos);//get variable portion
++}
++//debug
++//Break down the commands
++switch(found)
++{
++	case 0://F is passed (set frequency)
++	centerFrequency= (double)strtold(value.c_str(),NULL);
++		if(centerFrequency < 60000000)
++		{
++			std::cerr << std::endl <<"centerFrequency is less than 60M : " << std::fixed<<centerFrequency;
++			centerFrequency = centerFrequency * 10;
++		}
++		if(radio_tuner->vfo==0){//Set RX
++		//Update RX Freq
++		if(centerFrequency!=radio_tuner->rxfreq)//Change dirty bit only when freq has changed
++		{ 		
++			radio_tuner->rxFreqDirty=true;
++			trackerSocket->frequencyDirty=true;
++		}
++		else
++			{
++			       	radio_tuner->rxFreqDirty=false;
++				trackerSocket->frequencyDirty=false;
++			}
++		radio_tuner->rxfreq=centerFrequency;
++			}
++		else if(radio_tuner->vfo==1)//Set Tx
++		{
++		if(centerFrequency!=radio_tuner->txfreq)//Change dirty bit only when freq has changed
++			{
++				radio_tuner->txFreqDirty=true;
++				trackerSocket->frequencyDirty=true;
++			}
++		else
++		{
++		       	radio_tuner->txFreqDirty=false;
++			trackerSocket->frequencyDirty=false;
++		}
++		//Update TX Freq
++		radio_tuner->txfreq=centerFrequency;
++		}
++//Send RPRT 0
++	trackerSocket->socketSetTracker((void *)response.c_str());
++		break;
++
++	case 1://f is passed (get frequency)
++		//Clear the buffer
++		if(radio_tuner->vfo==0){//Rx 
++		//if the frequency is to be set check if the display is on
++		if(radio_tuner->fromDisplay)
++		{
++			//Set the rx freq to the frequency from display
++			radio_tuner->rxfreq =radio_tuner->fromDisplayFreq;
++			//reset the switch
++			radio_tuner->fromDisplay = false;
++		}
++		//Convert rxfreq to string
++		rxToString <<std::fixed<<std::setprecision(10)<<radio_tuner->rxfreq;
++		ret_rx = rxToString.str();
++		//report freq
++		trackerSocket->socketSetTracker((const void *)ret_rx.c_str());
++		rxToString.str("");
++		rxToString.clear();
++	
++		}	
++		else {	       
++
++	if(radio_tuner->vfo==1){//Tx
++		//report freq
++		txToString <<std::fixed<<std::setprecision(10)<<radio_tuner->txfreq;
++		ret_tx = txToString.str();
++		//report freq
++		trackerSocket->socketSetTracker((const void *)ret_tx.c_str());
++		txToString.str("");
++		txToString.clear();
++	}
++	}
++break;
++	case 30:// Select VFO
++		if(cmd.compare(2,4,"VFOB")==0)
++		{
++				//Change the selector rx
++			radio_tuner->vfo=0;
++		}
++		else
++		if(cmd.compare(2,4,"VFOA")==0)
++				{
++				//Change the selector tx
++			radio_tuner->vfo=1;
++				}
++//Send RPRT 0
++trackerSocket->socketSetTracker((void *)response.c_str());
++		break;
++
++
++	case 31://get VFO
++	if(radio_tuner->vfo==0){
++//Send RPRT 0
++trackerSocket->socketSetTracker((void *)response.c_str());
++	}else if(radio_tuner->vfo==1){
++//Send RPRT 0
++trackerSocket->socketSetTracker((void *)response.c_str());
++	}	
++	break;
++	case 47://Quit
++		std::cerr << std::endl << "QUITTING" <<std::endl;
++		radio_tuner->status='q';
++		break;
++
++	default:
++		;
++}//end switch
++//Reset
++cmds[j].clear();
++cmd.clear();
++ret_rx.clear();
++ret_tx.clear();
++}//end if
++}//end for
++}
++
++
++
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/src/Tracker.hxx soda-3.4.1/src/Tracker.hxx
+--- soda-3.4/src/Tracker.hxx	1970-01-01 00:00:00.000000000 +0000
++++ soda-3.4.1/src/Tracker.hxx	2016-04-27 14:22:54.397500772 +0000
+@@ -0,0 +1,115 @@
++#include "SoDaBase.hxx"
++#include "MultiMBox.hxx"
++#include "Command.hxx"
++#include <sys/types.h>
++#include <sys/socket.h>
++#include <stdio.h>
++#include <netinet/in.h>
++#include <netdb.h>
++#include <sys/un.h>
++#include "UDSockets.hxx"
++#include <iostream>
++#include <unistd.h>
++#include <netdb.h>
++#include <sys/select.h>
++#include <sys/time.h>
++#include <unistd.h>
++#include <sys/ioctl.h>
++#include <fcntl.h>
++#include <errno.h>
++#include <string.h>
++#include <boost/format.hpp>
++#include <boost/lexical_cast.hpp>
++#include <iostream>
++#include <string>
++#include <sstream>
++
++
++namespace SoDa{
++	namespace TRACKER {
++		    //Structure to pass to the tuner
++struct _RadioCommand{//This is object saves the state of the tracker and the radio
++int vfo;
++bool fromDisplay;
++bool rxFreqDirty;//Is set when rx changes 
++bool txFreqDirty;//Is set when tx changes 
++static double rxfreq;
++static double txfreq;
++static double fromDisplayFreq;
++std::string status;//Handle quit command
++_RadioCommand(){
++	rxFreqDirty=false;
++	txFreqDirty=false;
++	fromDisplay=false;
++}
++~_RadioCommand(){
++
++}
++
++};
++typedef _RadioCommand RadioCommand;
++
++
++
++class TrackerSocket {
++ public: 
++int track_socket,track_msgsock,track_rval;
++struct sockaddr_un track_server,track_client;
++std::string track_path;
++//Controls the isReady function
++bool tReady;
++//Frequency is ready
++bool frequencyDirty;
++//Buffer for received messages from tracker
++char track_buf[20];
++
++//Transport the updated frequencies
++RadioCommand *updateRadio;
++void socketGetTracker();
++int socketSetTracker(const void * Response);
++//Needed to prevent overflow and freeze of the gui
++int delay;
++ //Needed to have a smooth waterfall: Only update when the spectrum is ready
++bool updateSpectrum;
++bool isReady();
++//Needed to prevent overflow and freeze of the gui
++bool guiIsReady;
++TrackerSocket(const std::string & path);
++~TrackerSocket();
++    private:
++socklen_t track_client_addr_size;
++//Needed to prevent overflow of screen
++bool warned;
++    };
++
++
++
++
++
++//TrackerTune
++class TrackerTune{
++	public:
++std::string response;
++	TrackerTune()
++	{
++		centerFrequency=145000000;
++		cmdSize=0;
++		inputCmdSize=0;
++		//Respond back to gpredict
++		response = std::string("RPRT 0");
++       	};
++	~TrackerTune(){};
++void getParser(std::string cmd, RadioCommand *radio_tuner, TrackerSocket * trackerSocket);
++private:
++std::string ret_rx;
++std::string ret_tx;
++std::stringstream rxToString,txToString;
++double centerFrequency;
++std::string cmds [2];
++int cmdSize;
++int inputCmdSize;
++std::size_t newLine;
++};
++
++}
++}
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/src/UDSockets.cxx soda-3.4.1/src/UDSockets.cxx
+--- soda-3.4/src/UDSockets.cxx	2014-11-29 01:36:02.000000000 +0000
++++ soda-3.4.1/src/UDSockets.cxx	2016-04-27 14:22:54.401500772 +0000
+@@ -1,5 +1,6 @@
+ /*
+-  Copyright (c) 2012, Matthew H. Reilly (kb1vc)
++  Copyright (c) 2010,2014,Matthew H. Reilly (kb1vc)
++  Copyright (c) 2014, Aaron Yankey Antwi (aaronyan2001@gmail.com)
+   All rights reserved.
+
+   Redistribution and use in source and binary forms, with or without
+@@ -40,6 +41,10 @@
+ #include <errno.h>
+ #include <string.h>
+ #include <boost/format.hpp>
++#include <boost/lexical_cast.hpp>
++
++
++
+
+ SoDa::UD::ServerSocket::ServerSocket(const std::string & path)
+ {
+@@ -48,7 +53,7 @@
+   server_socket = socket(AF_UNIX, SOCK_STREAM, 0);
+     
+   if(server_socket < 0) {
+-    std::cerr << "Failed to create server socket... I quit." << std::endl;
++    std::cerr << std::endl << "Failed to create server socket... I quit." ;
+     exit(-1); 
+   }
+
+@@ -66,14 +71,14 @@
+
+   // now bind it
+   if (bind(server_socket, (struct sockaddr *) &server_address, len) < 0) {
+-    std::cerr << "Couldn't bind Unix domain socket at path " << path << " I quit." << std::endl;
++    std::cerr << std::endl << "Couldn't bind Unix domain socket at path " << path << " I quit." ;
+     exit(-1); 
+   }
+
+   // now let the world know that we're ready for one and only one connection.
+   stat = listen(server_socket, 1);
+   if(stat < 0) {
+-    std::cerr << "Couldn't listen on Unix socket  " << path << " got " << errno << " I quit." << std::endl; 
++    std::cerr << std::endl << "Couldn't listen on Unix socket  " << path << " got " << errno << " I quit." ; 
+     exit(-1); 
+   }
+
+@@ -86,7 +91,7 @@
+   int retry_count;
+   conn_socket = socket(AF_UNIX, SOCK_STREAM, 0);
+   if(conn_socket < 0) {
+-    std::cerr << boost::format("Failed to create client socket on [%s]... I quit.\n")
++    std::cerr << std::endl << boost::format("Failed to create client socket on [%s]... I quit.\n")
+ 			       % path; 
+     exit(-1); 
+   }
+@@ -106,8 +111,8 @@
+   }
+
+   if(stat < 0) {
+-    std::cerr << "Client couldn't connect to UNIX socket [" << path << "].  I quit." << std::endl;
+-    perror("oops.");
++    std::cerr << std::endl << "Client couldn't connect to UNIX socket [" << path << "].  I quit." ;
++    perror("oops: client could not connect to the socket: ClientSocket::ClientSocket()");
+     exit(-1); 
+   }
+
+@@ -116,6 +121,9 @@
+
+ }
+
++
++
++
+ bool SoDa::UD::ServerSocket::isReady()
+ {
+   if(ready) return true;
+@@ -137,6 +145,9 @@
+   return ready; 
+ }
+
++
++
++
+ int SoDa::UD::NetSocket::loopWrite(int fd, const void * ptr, unsigned int nbytes)
+ {
+   char * bptr = (char*) ptr;
+@@ -158,6 +169,7 @@
+     }
+   }
+ }
++
+ int SoDa::UD::NetSocket::put(const void * ptr, unsigned int size)
+ {
+   // we always put a buffer of bytes, preceded by a count of bytes to be sent.
+@@ -179,12 +191,13 @@
+   stat = read(conn_socket, &rsize, sizeof(unsigned int));
+   if(stat <= 0) {
+     if((errno == EWOULDBLOCK) || (errno == EAGAIN)) {
+-      //      std::cerr << ">>>" << std::endl; 
++      //      std::cerr << std::endl << ">>>" ; 
+       return 0; 
+     }
+     else {
+-      perror("Oops -- socket get -- "); 
+-      return stat;
++      perror("Oops -- socket get --: NetSocket::get() "); 
++      exit(-1);
++      //return stat;
+     }
+   }
+
+@@ -198,7 +211,7 @@
+ 	continue; 
+       }
+       else {
+-	perror("Ooops -- read buffer continued");
++	perror("Ooops -- read buffer continued: NetSocket::get()");
+ 	return ls;
+       }
+     }
+@@ -219,7 +232,7 @@
+ 	  continue; 
+ 	}
+ 	else {
+-	  perror("Ooops -- read buffer continued");
++	  perror("Ooops -- read buffer continued: NetSocket::get()");
+ 	  return ls;
+ 	}
+       }
+@@ -230,3 +243,4 @@
+   return size; 
+
+ }
++
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/src/UDSockets.hxx soda-3.4.1/src/UDSockets.hxx
+--- soda-3.4/src/UDSockets.hxx	2014-11-29 01:36:02.000000000 +0000
++++ soda-3.4.1/src/UDSockets.hxx	2016-04-27 14:22:54.401500772 +0000
+@@ -1,5 +1,7 @@
+ /*
+-  Copyright (c) 2012, Matthew H. Reilly (kb1vc)
++  Copyright (c) 2010,2014,Matthew H. Reilly (kb1vc)
++  Copyright (c) 2014, Aaron Yankey Antwi (aaronyan2001@gmail.com)
++
+   All rights reserved.
+
+   Redistribution and use in source and binary forms, with or without
+@@ -31,7 +33,6 @@
+ #include "SoDaBase.hxx"
+ #include "MultiMBox.hxx"
+ #include "Command.hxx"
+-
+ #include <sys/types.h>
+ #include <sys/socket.h>
+ #include <stdio.h>
+@@ -39,29 +40,37 @@
+ #include <netdb.h>
+ #include <sys/un.h>
+
+-#include <string>
+
+ namespace SoDa {
+-  namespace UD {  // Unix Domain sockets. 
++  namespace UD	{  // Unix Domain sockets. 
+     class NetSocket {
+     public:
+       NetSocket() {
+ 	timeout.tv_sec = 0;
+ 	timeout.tv_usec = 5; 
+       }
+-
+     
+       int put(const void * ptr, unsigned int size);
+       int get(void * ptr, unsigned int size);
+     
+-      int server_socket, conn_socket, portnum;
+-      struct sockaddr_un server_address, client_address;
+-
++      int server_socket, conn_socket, portnum,track_socket,track_msgsock,track_rval;
++      struct sockaddr_un server_address, client_address,track_server,track_client;
++      
+       struct timeval timeout; 
+     private:
+       int loopWrite(int fd, const void * ptr, unsigned int nbytes);
+     };
+
++
++    class ClientSocket : public NetSocket {
++    public:
++      ClientSocket(const std::string & path, int startup_timeout_count = 1);
++      ~ClientSocket() { close(conn_socket); }
++    private:
++      struct hostent * server; 
++
++    };
++    
+     class ServerSocket : public NetSocket {
+     public:
+       ServerSocket(const std::string & path);
+@@ -88,13 +97,11 @@
+       std::string mailbox_pathname; 
+     };
+
+-    class ClientSocket : public NetSocket {
+-    public:
+-      ClientSocket(const std::string & path, int startup_timeout_count = 1);
+-      ~ClientSocket() { close(conn_socket); }
+-    private:
+-      struct hostent * server; 
+-    };
++
++
++
++
++    
+   }
+ }
+
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/src/UI.cxx soda-3.4.1/src/UI.cxx
+--- soda-3.4/src/UI.cxx	2014-11-30 02:14:47.000000000 +0000
++++ soda-3.4.1/src/UI.cxx	2016-04-27 14:22:54.389500772 +0000
+@@ -1,5 +1,5 @@
+ /*
+-  Copyright (c) 2013, Matthew H. Reilly (kb1vc)
++  Copyright (c) 2013,2014 Matthew H. Reilly (kb1vc),Aaron Yankey Antwi <aaronyan2001@gmail.com>
+   All rights reserved.
+
+   Redistribution and use in source and binary forms, with or without
+@@ -28,10 +28,12 @@
+
+ #include "UI.hxx"
+
++#define FFT_SEND_THRESHOLD 8
+
+ SoDa::UI::UI(Params * params, CmdMBox * _cwtxt_stream,
+ 	     DatMBox * _rx_stream, DatMBox * _if_stream, 
+-	     CmdMBox * _cmd_stream, CmdMBox * _gps_stream) : SoDa::SoDaThread("UI")
++	     CmdMBox * _cmd_stream, CmdMBox * _gps_stream ) : SoDa::SoDaThread("UI")
++
+ {
+   // connect to our message streams.
+   cwtxt_stream = _cwtxt_stream;
+@@ -49,7 +51,6 @@
+   // This UI object is a server.
+   server_socket = new SoDa::UD::ServerSocket(params->getServerSocketBasename() + "_cmd");
+   wfall_socket = new SoDa::UD::ServerSocket(params->getServerSocketBasename() + "_wfall");
+-
+   baseband_rx_freq = 144e6; // just a filler to avoid divide by zero. 
+   spectrum_center_freq = 144.2e6;
+   
+@@ -64,8 +65,8 @@
+   lo_spectrogram = new Spectrogram(lo_spectrogram_buckets);
+   lo_spectrum = new float[lo_spectrogram_buckets * 4];
+   for(int i = 0; i < lo_spectrogram_buckets; i++) {
+-    lo_spectrum[i] = 0.0; 
+-  }
++	    lo_spectrum[i] = 0.0; 
++	  }
+
+   // Now  how wide is a 200KHz wide chunk of spectrum, given
+   // spectrogram_buckets frequency buckets in the RF sample rate
+@@ -83,14 +84,10 @@
+     log_spectrum[i] = -200.0; 
+   }
+
+-  fft_send_counter = 0;
+-  fft_update_interval = 4;
+-  new_spectrum_setting = true;
+-  fft_acc_gain = 0.9;
++  fft_send_counter = 0; 
+   // we are not yet in lo check mode
+   lo_check_mode = false;
+ }
+-
+ void SoDa::UI::updateSpectrumState()
+ {
+   cmd_stream->put(new SoDa::Command(Command::REP, Command::SPEC_STEP,
+@@ -121,12 +118,9 @@
+   cmd_stream->put(new SoDa::Command(Command::SET, Command::RX_FE_FREQ, 144.2e6));
+   cmd_stream->put(new SoDa::Command(Command::SET, Command::TX_FE_FREQ, 144.2e6));
+   cmd_stream->put(new SoDa::Command(Command::SET, Command::RX_LO3_FREQ, 100e3));
+-  cmd_stream->put(new SoDa::Command(Command::SET, Command::RX_AF_FILTER, 1));
+-  usleep(100000);
+   cmd_stream->put(new SoDa::Command(Command::SET, Command::TX_STATE, 0));
+
+   updateSpectrumState(); 
+-
+   unsigned int socket_read_count = 0;
+   unsigned int socket_empty_count = 0;
+   unsigned int iter_count = 0;
+@@ -135,12 +129,10 @@
+     iter_count++;
+     bool didwork = false;
+     bool got_new_netmsg = false; 
+-    // listen on the socket.
+-
++// listen on the socket.
+     if(server_socket->isReady()) {
+       if(new_connection) {
+ 	updateSpectrumState();
+-
+ 	std::string vers= (boost::format("%s SVN %s") % PACKAGE_VERSION % SVN_VERSION).str(); 
+ 	SoDa::Command * vers_cmd = new SoDa::Command(Command::REP,
+ 						     Command::SDR_VERSION,
+@@ -165,7 +157,6 @@
+     else {
+       new_connection = true; 
+     }
+-
+     // if there are commands arriving from the socket port, handle them.
+     if(got_new_netmsg) {
+       cmd_stream->put(net_cmd);
+@@ -173,6 +164,7 @@
+       if(net_cmd->target == SoDa::Command::STOP) {
+ 	// relay "stop" commands to the GPS unit. 
+ 	gps_stream->put(new SoDa::Command(Command::SET, Command::STOP, 0));
++	
+ 	break;
+       }
+       net_cmd = NULL; 
+@@ -195,7 +187,6 @@
+       gps_stream->free(ring_cmd);
+       didwork = true; 
+     }
+-      
+     
+     // listen ont the IF stream
+     int bcount;
+@@ -207,7 +198,6 @@
+       if_stream->free(if_buf); 
+     }
+
+-    // 
+     // if there are any socket listeners on the waterfall channel,
+     // clue them in.
+     
+@@ -244,22 +234,9 @@
+   // when we get a SET SPEC_CENTER_FREQ
+   switch(cmd->target) {
+   case SoDa::Command::SPEC_CENTER_FREQ:
+-    spectrum_center_freq = cmd->dparms[0];
+-    new_spectrum_setting = true;
++    spectrum_center_freq = cmd->dparms[0]; 
+     reportSpectrumCenterFreq();
+     break;
+-  case SoDa::Command::SPEC_AVG_WINDOW:
+-    fft_acc_gain = 1.0 - (1.0 / ((double) cmd->iparms[0]));
+-    new_spectrum_setting = true;
+-    break; 
+-  case SoDa::Command::SPEC_UPDATE_RATE:
+-    fft_update_interval = 11 - cmd->iparms[0];
+-    if(fft_update_interval < 1) fft_update_interval = 1;
+-    if(fft_update_interval > 12) fft_update_interval = 12;
+-    new_spectrum_setting = true;
+-    debugMsg(boost::format("Updated SPEC_UPDATE_RATE = %d -> interval = %d\n")
+-	     % cmd->iparms[0] % fft_update_interval);
+-    break; 
+   default:
+     break; 
+   }
+@@ -290,6 +267,7 @@
+
+ static unsigned int dbgctrfft = 0;
+ static bool first_ready = true;
++static float fft_acc_gain = 0.0;
+ static bool calc_max_first = true;
+
+ void SoDa::UI::sendFFT(SoDa::SoDaBuf * buf)
+@@ -305,16 +283,15 @@
+   
+   // Do an FFT on the buffer
+   // Note that we'll only send over on buffer every
+-  // fft_update_interval times that we're called -- this will keep
++  // 20 times that we're called -- this will keep
+   // the IP traffic to something reasonable. 
+   if(lo_check_mode) {
+     lo_spectrogram->apply_acc(buf->getComplexBuf(), buf->getComplexLen(), lo_spectrum, (fft_send_counter == 0) ? 0.0 : 0.1);
+   }
+   else {
+-    spectrogram->apply_acc(buf->getComplexBuf(), buf->getComplexLen(), spectrum,
+-			   (new_spectrum_setting) ? 0.0 : fft_acc_gain);
++    spectrogram->apply_acc(buf->getComplexBuf(), buf->getComplexLen(), spectrum, fft_acc_gain);
+   }
+-  new_spectrum_setting = false; 
++  fft_acc_gain = 1.0;
+   calc_max_first = false; 
+
+   float * slice;
+@@ -338,7 +315,7 @@
+     }
+   }
+
+-  if(lo_check_mode && (fft_send_counter >= 8)) {
++  if(lo_check_mode && (fft_send_counter >= FFT_SEND_THRESHOLD)) {
+     // scan the buffer. Then find the peak.
+     // scan from lo_spectrum midpoint minus 2KHz to plus 2KHz
+     float magmax = 0.0;
+@@ -349,6 +326,7 @@
+       std::complex<float> v = lo_spectrum[j];
+       float mag = v.real() * v.real() + v.imag() * v.imag();
+       if(mag > magmax) {
++	std::cerr << "magnitude peak at " << i << " mag = " << mag << std::endl; 
+ 	magmax = mag;
+ 	maxi = i; 
+       }
+@@ -356,7 +334,7 @@
+     lo_check_mode = false;
+     // send the report
+     double freq = ((float) maxi) * lo_hz_per_bucket;
+-    debugMsg(boost::format("offset = %g\n") % freq); 
++    std::cerr << "offset = " << freq << std::endl; 
+     cmd_stream->put(new SoDa::Command(Command::REP, Command::LO_OFFSET,
+ 				      freq)); 
+     cmd_stream->put(new SoDa::Command(Command::REP, Command::SPEC_RANGE_LOW,
+@@ -367,13 +345,14 @@
+     cmd_stream->put(new SoDa::Command(Command::SET, Command::LO_CHECK,
+ 				      0.0)); 
+   }
+-  else if((fft_send_counter >= fft_update_interval) && (slice != NULL)) {
++  else if((fft_send_counter >= FFT_SEND_THRESHOLD) && (slice != NULL)) {
+     // send the buffer over to the XY plotter.
+     for(int i = 0; i < required_spect_buckets; i++) {
+       log_spectrum[i] = 10.0 * log10(slice[i] * 0.05); 
+     }
+     wfall_socket->put(log_spectrum, sizeof(float) * required_spect_buckets);
+     fft_send_counter = 0;
++    fft_acc_gain = 0.05;
+     calc_max_first = true; 
+     float maxmag = 0.0;
+     int bigidx = -1; 
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/src/UI.hxx soda-3.4.1/src/UI.hxx
+--- soda-3.4/src/UI.hxx	2014-11-29 01:36:01.000000000 +0000
++++ soda-3.4.1/src/UI.hxx	2016-04-27 14:22:54.401500772 +0000
+@@ -1,4 +1,5 @@
+ /*
++ *
+ Copyright (c) 2012, Matthew H. Reilly (kb1vc)
+ All rights reserved.
+
+@@ -42,6 +43,7 @@
+     UI(Params * params, CmdMBox * cwtxt_stream,
+        DatMBox * rx_stream, DatMBox * if_stream, 
+        CmdMBox * cmd_stream, CmdMBox * gps_stream);
++
+     ~UI();
+     
+     void run();
+@@ -61,6 +63,8 @@
+     // these are the pieces of the posix message queue interface to the GUI or whatever.
+     SoDa::UD::ServerSocket * server_socket, * wfall_socket; 
+
++
++
+     // we ship a spectrogram of the RX IF stream to the GUI
+     Spectrogram * spectrogram;
+     unsigned int spectrogram_buckets; 
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/src/USRPCtrl.cxx soda-3.4.1/src/USRPCtrl.cxx
+--- soda-3.4/src/USRPCtrl.cxx	2014-11-30 02:14:47.000000000 +0000
++++ soda-3.4.1/src/USRPCtrl.cxx	2016-04-27 14:22:54.397500772 +0000
+@@ -32,7 +32,6 @@
+ #include <uhd/utils/safe_main.hpp>
+ #include <uhd/usrp/multi_usrp.hpp>
+ #include <uhd/usrp/multi_usrp.hpp>
+-#include <uhd/utils/msg.hpp>
+ #include <uhd/types/tune_request.hpp>
+ #include <uhd/types/tune_result.hpp>
+ #include <boost/format.hpp>
+@@ -45,8 +44,6 @@
+ const unsigned int SoDa::USRPCtrl::TX_RELAY_CTL = 0x1000;
+ const unsigned int SoDa::USRPCtrl::TX_RELAY_MON = 0x0800;
+
+-SoDa::USRPCtrl * SoDa::USRPCtrl::singleton_ctrl_obj = NULL; 
+-
+ // borrowed from uhd_usrp_probe print_tree function
+ void dumpTree(const uhd::fs_path &path, uhd::property_tree::sptr tree){
+     std::cout << path << std::endl;
+@@ -57,13 +54,9 @@
+
+ SoDa::USRPCtrl::USRPCtrl(Params * _params, CmdMBox * _cmd_stream) : SoDa::SoDaThread("USRPCtrl")
+ {
+-  // point to myself.... 
+-  SoDa::USRPCtrl::singleton_ctrl_obj = this;
++  // turn off all the babbling, by default. 
++  debug_mode = false;
+
+-  // setup a normal message handler that doesn't babble
+-  // so much. 
+-  uhd::msg::register_handler(normal_message_handler);
+-  
+   // initialize variables
+   last_rx_req_freq = 0.0; // at least this is a number...
+   tx_on = false;
+@@ -96,34 +89,18 @@
+
+   if((motherboard_name == "B200") || (motherboard_name == "B210")) {
+     // B2xx needs a master clock rate of 50 MHz to generate a sample rate of 625 kS/s.
+-    // B2xx needs a master clock rate of 25 MHz to generate a sample rate of 625 kS/s.
+-    usrp->set_master_clock_rate(25.0e6);
+-    debugMsg(boost::format("Initial setup %s") % usrp->get_pp_string());
+-    is_B2xx = true;
+-    is_B210 = (motherboard_name == "B210");
++    usrp->set_master_clock_rate(50.0e6);
++    if (debug_mode) std::cerr << "Initial setup: " << usrp->get_pp_string() << std::endl; 
++    is_B2xx = true; 
+   }
+   else {
+     is_B2xx = false; 
+-    is_B210 = false;
+   }
+
+   // we need to setup the subdevices
+   if(is_B2xx) {
+     usrp->set_rx_subdev_spec(std::string("A:A"), 0);
+-    if(is_B210) {
+-      debugMsg("Setup two subdevices -- TVRT_LO Capable");
+-      usrp->set_tx_subdev_spec(std::string("A:A A:B"), 0);
+-      tvrt_lo_capable = true;
+-    }
+-    else {
+-      debugMsg("Setup one subdevice -- NOT TVRT_LO Capable");
+-      usrp->set_tx_subdev_spec(std::string("A:A"), 0);
+-      tvrt_lo_capable = false;
+-    }
+-  }
+-  else {
+-    debugMsg("Setup one subdevice -- NOT TVRT_LO Capable");
+-    tvrt_lo_capable = false;
++    usrp->set_tx_subdev_spec(std::string("A:A"), 0);
+   }
+
+   first_gettime = 0.0;
+@@ -163,11 +140,6 @@
+   // turn off the transmitter
+   setTXEna(false);
+
+-  // turn of the LO
+-  tvrt_lo_mode = false;
+-
+-  // if we are in integer-N mode, setup the step table.
+-  initStepMap(); 
+ }
+
+
+@@ -210,8 +182,9 @@
+     }
+     else {
+       // process the command.
+-      if((cmds_processed & 0xff) == 0) {
+-	debugMsg(boost::format("USRPCtrl processed %d commands") % cmds_processed);
++      if(debug_mode && ((cmds_processed & 0xff) == 0)) {
++	std::cerr << "USRPCtrl processed "
++		  << cmds_processed << " commands." << std::endl;
+       }
+       cmds_processed++; 
+       execCommand(cmd);
+@@ -283,47 +256,49 @@
+   // 
+   
+   double target_rx_freq = freq;
+- 
++  
++  uhd::tune_request_t tx_request(freq);
++  
+   if(sel == 'r') {
+     // we round the target frequency to a point that puts the
+-    // baseband between 150 and 250 KHz below the requested
+-    // frequency. and an even 100kHz multiple.
+-
+-    target_rx_freq = 100e3 * floor(freq / 100e3);
+-    debugMsg(boost::format("freq = %lf 1st target = %lf\n") % freq % target_rx_freq);
+-    while((freq - target_rx_freq) < 100e3) {
+-      target_rx_freq -= 100.0e3;
+-      debugMsg(boost::format("\tfreq = %lf new target = %lf\n") % freq % target_rx_freq);
+-    }
++    // baseband between 80 and 220 KHz below the requested
++    // frequency. and an even 100kHz multiple. 
+
++    // The nearest step of the integer-N synthesizer is at 143.75
++    // so that is the constant front-end RX frequency that we'll use.
++    double stepsize;
++    double freq1stLO;
+     /// This code depends on the integer-N tuning features in libuhd 3.7
+     /// earlier libraries will revert to fractional-N tuning and might
+     /// see a rise in the noisefloor and perhaps some troublesome spurs
+     /// at multiples of the reference frequency divided by the fractional divisor.
+-    uhd::tune_request_t rx_trequest(target_rx_freq); 
+-    if(supports_IntN_Mode) {
+-      rx_trequest.target_freq = target_rx_freq;
+-      rx_trequest.rf_freq = getNearestStep(target_rx_freq, 1.0e6);
+-      rx_trequest.rf_freq_policy = uhd::tune_request_t::POLICY_MANUAL;
+-      rx_trequest.dsp_freq_policy = uhd::tune_request_t::POLICY_AUTO;
+-      rx_trequest.args = uhd::device_addr_t("mode_n=integer");
++    if(freq > 256e6) stepsize = 12.5e6;
++    else stepsize = 6.25e6; 
++    freq1stLO = floor(freq / stepsize) * stepsize;
++
++    //    if((freq - freq1stLO) < 1.0e6) freq1stLO += stepsize;
++
++    target_rx_freq = 100e3 * floor(freq / 100e3);
++    if((freq - target_rx_freq) < 80e3) target_rx_freq -= 100.0e3; 
++
++    uhd::tune_request_t rx_trequest(target_rx_freq, 100.0e3);
++    if(is_B2xx) {
++      rx_trequest = uhd::tune_request_t(target_rx_freq, -100.0e3);
+     }
+     else {
+-      rx_trequest.target_freq = target_rx_freq;
+-      rx_trequest.rf_freq = target_rx_freq; 
+-      rx_trequest.rf_freq_policy = uhd::tune_request_t::POLICY_AUTO;
+-      rx_trequest.dsp_freq_policy = uhd::tune_request_t::POLICY_AUTO;
++      //rx_trequest.args = uhd::device_addr_t("mode_n=integer");
+     }
+-
+     last_rx_tune_result = usrp->set_rx_freq(rx_trequest);
+     last_rx_tune_result = checkLock(rx_trequest, 'r', last_rx_tune_result);
+-    debugMsg(boost::format("RX Tune RF_actual %lf DDC = %lf tuned = %lf target = %lf request  rf = %lf request ddc = %lf\n")
+-	     % last_rx_tune_result.actual_rf_freq
+-	     % last_rx_tune_result.actual_dsp_freq
+-	     % freq
+-	     % target_rx_freq
+-	     % rx_trequest.rf_freq
+-	     % rx_trequest.dsp_freq);
++    if(debug_mode) {
++      std::cerr << boost::format("RX Tune RF_actual %lf DDC = %lf tuned = %lf target = %lf request  rf = %lf request ddc = %lf\n")
++	% last_rx_tune_result.actual_rf_freq
++	% last_rx_tune_result.actual_dsp_freq
++	% freq
++	% target_rx_freq
++	% rx_trequest.rf_freq
++	% rx_trequest.dsp_freq;
++    }
+   }
+   else {
+     // On the transmit side, we're using a minimal IF rate and
+@@ -333,37 +308,16 @@
+     // unless we're on a B2xx -- in that case, we adjust the LO anyway.
+     if(!tx_on && !is_B2xx) return;
+
+-    uhd::tune_request_t tx_request(freq);
+-    
+-    if(tvrt_lo_mode) {
+-      tx_request.rf_freq_policy = uhd::tune_request_t::POLICY_MANUAL;
+-      tx_request.rf_freq = tvrt_lo_fe_freq;
++    if(debug_mode) {
++      std::cerr << boost::format("Tuning TX unit to new frequency %f (request = %f  (%f %f))\n")
++	% freq % tx_request.target_freq % tx_request.rf_freq % tx_request.dsp_freq;
+     }
+-    else {
+-      tx_request.rf_freq_policy = uhd::tune_request_t::POLICY_AUTO;
+-    }
+-
+-    debugMsg(boost::format("Tuning TX unit to new frequency %f (request = %f  (%f %f))\n")
+-	     % freq % tx_request.target_freq % tx_request.rf_freq % tx_request.dsp_freq);
+-
+-    last_tx_tune_result = usrp->set_tx_freq(tx_request);
+-
+-    debugMsg(boost::format("Tuned TX unit to new frequency %g t.rf %g a.rf %g t.dsp %g a.dsp %g\n")
+-	     % freq
+-	     % last_tx_tune_result.target_rf_freq
+-	     % last_tx_tune_result.actual_rf_freq
+-	     % last_tx_tune_result.target_dsp_freq
+-	     % last_tx_tune_result.actual_dsp_freq);
+
++    // bool last_tx_ena = tx_fe_subtree->access<bool>("enabled").get();
++    // tx_fe_subtree->access<bool>("enabled").set(true);
++    last_tx_tune_result = usrp->set_tx_freq(freq);  
+     last_tx_tune_result = checkLock(tx_request, 't', last_tx_tune_result);
+     // tx_fe_subtree->access<bool>("enabled").set(last_tx_ena);
+-
+-    double txfreqs[2];
+-    txfreqs[0] = usrp->get_tx_freq(0);
+-    if(tvrt_lo_mode) {
+-      txfreqs[1] = usrp->get_tx_freq(1);
+-      debugMsg(boost::format("TX LO = %g  TVRT LO = %g\n") % txfreqs[0] % txfreqs[1]);
+-    }
+   }
+
+   // If we are setting the RX mode, then we need to send
+@@ -372,6 +326,8 @@
+     cmd_stream->put(new Command(Command::SET, Command::RX_LO3_FREQ,
+ 				freq - target_rx_freq)); 
+   }
++  else {
++  }
+ }
+
+ /**
+@@ -403,17 +359,18 @@
+     std::cerr << "execSetCommand got a non-set command!  " << cmd->toString() << std::endl;
+     return; 
+   }
+-  double tmp;
+   switch (cmd->target) {
+   case Command::RX_RETUNE_FREQ:
+     last_rx_req_freq = cmd->dparms[0]; 
+     freq = cmd->dparms[0];
+     fdiff = freq - (last_rx_tune_result.actual_rf_freq - last_rx_tune_result.actual_dsp_freq);
+     
+-    debugMsg(boost::format("Got RX RETUNE request -- frequency %f diff = %f  last actual_rf %f  dsp %f\n")
+-	     % freq % fdiff % last_rx_tune_result.actual_rf_freq % last_rx_tune_result.actual_dsp_freq);
++    if(debug_mode) {
++      std::cerr << boost::format("Got RX RETUNE request -- frequency %f diff = %f  last actual_rf %f  dsp %f\n")
++	% freq % fdiff % last_rx_tune_result.actual_rf_freq % last_rx_tune_result.actual_dsp_freq; 
++    }
+
+-    if((fdiff < 200e3) && (fdiff > 100e3)) {
++    if((fdiff < 300e3) && (fdiff > 50e3)) {
+       cmd_stream->put(new Command(Command::SET, Command::RX_LO3_FREQ, fdiff)); 
+       cmd_stream->put(new Command(Command::REP, Command::RX_FE_FREQ, 
+ 				  last_rx_tune_result.actual_rf_freq - last_rx_tune_result.actual_dsp_freq));
+@@ -433,7 +390,9 @@
+       set1stLOFreq(last_rx_req_freq, 'r', false);
+     }
+     else {
+-      debugMsg(boost::format("setting lo check freq to %lf\n") % cmd->dparms[0]);
++      if(debug_mode) {
++	std::cerr << "setting lo check freq to " << cmd->dparms[0] << std::endl;
++      }
+       usrp->set_rx_freq(cmd->dparms[0]);
+       // now send a GET lo offset command
+       cmd_stream->put(new Command(Command::GET, Command::LO_OFFSET, 0));
+@@ -443,9 +402,11 @@
+   case Command::TX_RETUNE_FREQ:
+   case Command::TX_TUNE_FREQ:
+   case Command::TX_FE_FREQ:
+-    debugMsg(boost::format("\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n!!! GOT TX TUNE REQ !!!!!!!!\n!!!!!!!!!!!!!!!!!!\n"));
+-    debugMsg(boost::format(" freq = %10lg\n") % freq);
+-    debugMsg(boost::format("\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n!!! GOT TX TUNE REQ !!!!!!!!\n!!!!!!!!!!!!!!!!!!"));
++    if (debug_mode) {
++      std::cerr << "\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n!!! GOT TX TUNE REQ !!!!!!!!\n!!!!!!!!!!!!!!!!!!" << std::endl;
++      std::cerr << " freq = " << std::setprecision(10) << freq << std::endl; 
++      std::cerr << "\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n!!! GOT TX TUNE REQ !!!!!!!!\n!!!!!!!!!!!!!!!!!!" << std::endl;
++    }
+     set1stLOFreq(cmd->dparms[0] + tx_freq_rxmode_offset, 't', false);
+     tx_freq = cmd->dparms[0]; 
+     cmd_stream->put(new Command(Command::REP, Command::TX_FE_FREQ, 
+@@ -476,12 +437,12 @@
+     break; 
+   case Command::TX_RF_GAIN:
+     tx_rf_gain = tx_rf_gain_range.start() + cmd->dparms[0] * 0.01 * (tx_rf_gain_range.stop() - tx_rf_gain_range.start());
+-    tmp = cmd->dparms[0];
+-    debugMsg(boost::format("Setting TX gain to %lg from power %lg") % tx_rf_gain % tmp);
++
+     if(tx_on) {
+       usrp->set_tx_gain(tx_rf_gain);
+       cmd_stream->put(new Command(Command::REP, Command::TX_RF_GAIN, 
+ 				  usrp->get_tx_gain())); 
++
+     }
+     break; 
+   case SoDa::Command::TX_STATE: // SET TX_ON
+@@ -496,16 +457,22 @@
+       tx_freq_rxmode_offset = 0.0; // so tuning works.
+
+       // enable the transmit relay
+-      debugMsg(boost::format("Enabling TX\nCurrent TXENA %d\n") % tx_fe_subtree->access<bool>("enabled").get());
+-      if(supports_tx_gpio) {
+-	debugMsg(boost::format("Current GPIO = %x ") %
+-		 dboard->get_gpio_out(uhd::usrp::dboard_iface::UNIT_TX));
++      if(debug_mode) {
++	std::cerr << "Enabling TX" << std::endl;
++	std::cerr << "Current TXENA " << tx_fe_subtree->access<bool>("enabled").get() << std::endl;
++	if(supports_tx_gpio) {
++	  std::cerr << boost::format("Current GPIO = %x ") %
++	    dboard->get_gpio_out(uhd::usrp::dboard_iface::UNIT_TX) << std::endl;
++	}
+       }
+       setTXEna(true);
+-
+-      debugMsg(boost::format("New TXENA %d\n") % tx_fe_subtree->access<bool>("enabled").get());
+-      if(supports_tx_gpio) {
+-	debugMsg(boost::format("New GPIO = %x ") % dboard->get_gpio_out(uhd::usrp::dboard_iface::UNIT_TX));
++      if(debug_mode) {
++	std::cerr << "New TXENA "
++		  << tx_fe_subtree->access<bool>("enabled").get() << std::endl;
++	if(supports_tx_gpio) {
++	  std::cerr << boost::format("New GPIO = %x ")
++	    % dboard->get_gpio_out(uhd::usrp::dboard_iface::UNIT_TX) << std::endl;
++	}
+       }
+       // and tell the TX unit to turn on the TX
+       cmd_stream->put(new Command(Command::SET, Command::TX_STATE, 
+@@ -526,49 +493,39 @@
+       // We keep the rxmode_offset here in case other modules
+       // leave the TXLO on.
+       setTXEna(false); 
+-      debugMsg(boost::format("Disabling TX\nGot TXENA %d") % tx_fe_subtree->access<bool>("enabled").get());
+-      if(supports_tx_gpio) {
+-	debugMsg(boost::format("Got GPIO = %x ") % 
+-		 dboard->get_gpio_out(uhd::usrp::dboard_iface::UNIT_TX));
++      if(debug_mode) {
++	std::cerr << "Disabling TX" << std::endl;
++	std::cerr << "Got TXENA " << tx_fe_subtree->access<bool>("enabled").get() << std::endl;
++	if(supports_tx_gpio) {
++	  std::cerr << boost::format("Got GPIO = %x ") %
++	    dboard->get_gpio_out(uhd::usrp::dboard_iface::UNIT_TX) << std::endl;
++	}
+       }
+     }
+     break; 
+
+   case Command::CLOCK_SOURCE:
+     if((cmd->iparms[0] & 1) == 1) {
+-      debugMsg("Setting reference to external");
++      if(debug_mode) {
++	std::cerr << "Setting reference to external" << std::endl;
++      }
+       usrp->set_clock_source(std::string("external"));
+     }
+     else {
+-      debugMsg("Setting reference to internal");
++      if(debug_mode) {
++	std::cerr << "Setting reference to internal" << std::endl;
++      }
+       usrp->set_clock_source(std::string("internal"));
+     }
+     break; 
+
+   case Command::RX_ANT:
+     usrp->set_rx_antenna(cmd->sparm);
+-    debugMsg(boost::format("Got RX antenna as [%s]\n") % usrp->get_rx_antenna());
+-    cmd_stream->put(new Command(Command::REP, Command::RX_ANT, usrp->get_rx_antenna()));
+     break; 
+
+   case Command::TX_ANT:
+     tx_ant = cmd->sparm; 
+     usrp->set_tx_antenna(cmd->sparm);
+-    cmd_stream->put(new Command(Command::REP, Command::TX_ANT, usrp->get_tx_antenna()));
+-    break;
+-
+-  case Command::TVRT_LO_CONFIG:
+-    setTransverterLOFreqPower(cmd->dparms[0], cmd->dparms[1]);
+-    break;
+-
+-  case SoDa::Command::TVRT_LO_ENABLE:
+-    debugMsg("Enable Transverter LO");
+-    enableTransverterLO();
+-    break; 
+-
+-  case SoDa::Command::TVRT_LO_DISABLE:
+-    debugMsg("Disable Transverter LO");
+-    disableTransverterLO();
+     break;
+
+   default:
+@@ -622,16 +579,12 @@
+
+   case Command::HWMB_REP:
+     cmd_stream->put(new Command(Command::REP, Command::HWMB_REP,
+-				(boost::format("%s\t%6.1f to %6.1f MHz")
+-				 % motherboard_name
+-				 % (rx_rf_freq_range.start() * 1e-6)
+-				 % (rx_rf_freq_range.stop() * 1e-6)).str()));
++				motherboard_name));
+     break; 
+   default:
+     break; 
+   }
+ }
+-
+ void SoDa::USRPCtrl::execRepCommand(Command * cmd)
+ {
+   switch (cmd->target) {
+@@ -662,8 +615,9 @@
+     unsigned short out = dboard->get_gpio_out(uhd::usrp::dboard_iface::UNIT_TX);
+   
+     // and print it.
+-    debugMsg(boost::format("TX GPIO direction = %04x  control = %04x  output = %04x  ctlmask = %04x  monmask = %04x") % dir % ctl % out % TX_RELAY_CTL % TX_RELAY_MON);
+-
++    if(debug_mode) {
++      std::cerr << boost::format("TX GPIO direction = %04x  control = %04x  output = %04x  ctlmask = %04x  monmask = %04x") % dir % ctl % out % TX_RELAY_CTL % TX_RELAY_MON << std::endl;
++    }
+
+     // now set the direction to OUT for the CTL bit
+     dboard->set_gpio_ddr(uhd::usrp::dboard_iface::UNIT_TX,
+@@ -693,8 +647,9 @@
+   
+   // enable the transmitter (or disable it)
+   tx_fe_subtree->access<bool>("enabled").set(val);
+-  debugMsg(boost::format("Got %d from call to en/dis TX with val = %d")
+-	   % tx_fe_subtree->access<bool>("enabled").get() % val);
++  if(debug_mode) {
++    std::cerr << "Got " << tx_fe_subtree->access<bool>("enabled").get() << " from call to en/dis TX with val = " << val << std::endl;
++  }
+
+   // if we're enabling, set the power, freq, and other stuff
+   if(val) {
+@@ -732,182 +687,3 @@
+   return ((enabits & TX_RELAY_MON) != 0); 
+ }
+
+-void SoDa::USRPCtrl::setTransverterLOFreqPower(double freq, double power)
+-{
+-  uhd::gain_range_t tx_gain_range = usrp->get_tx_gain_range(1);
+-  double plo = tx_gain_range.start();
+-  double phi = tx_gain_range.stop();
+-  tvrt_lo_gain = plo + power * (phi - plo);
+-  tvrt_lo_freq = freq; 
+-  
+-  debugMsg(boost::format("Setting Transverter LO freq = %10lg power = %g gain = %g\n") % tvrt_lo_freq % power % tvrt_lo_gain);
+-  
+-  debugMsg("About to report Transverter LO setting.");
+-  cmd_stream->put(new Command(Command::REP, Command::TVRT_LO_CONFIG, tvrt_lo_freq, power));  
+-
+-}
+-
+-void SoDa::USRPCtrl::enableTransverterLO()
+-{
+-  if(!tvrt_lo_capable) {
+-    tvrt_lo_mode = false; 
+-    return;
+-  }
+-
+-  debugMsg("Enabling transverter LO\n");
+-  usrp->set_tx_antenna("TX2", 1);
+-    
+-  usrp->set_tx_gain(tvrt_lo_gain, 1);
+-  // tune the first LO 4MHz below the target, and let the DDC make up the rest. 
+-  uhd::tune_request_t lo_freq_req(tvrt_lo_freq, -4.0e6);
+-  uhd::tune_result_t tres = usrp->set_tx_freq(lo_freq_req, 1);
+-
+-  tvrt_lo_mode = true;
+-  
+-  debugMsg(boost::format("LO frequency = %10lg power %g  number of channels = %d target_rf %g actual rf %g target dsp %g actual dsp %g\n")
+-	     % usrp->get_tx_freq(1) % usrp->get_tx_gain(1) % usrp->get_tx_num_channels()
+-	     % tres.target_rf_freq % tres.actual_rf_freq % tres.target_dsp_freq % tres.actual_dsp_freq);
+-
+-  tvrt_lo_fe_freq = tres.target_rf_freq; 
+-}
+-
+-void SoDa::USRPCtrl::disableTransverterLO()
+-{
+-  tvrt_lo_mode = false;
+-  if(!tvrt_lo_capable) return; 
+-  usrp->set_tx_gain(0.0, 1);
+-  usrp->set_tx_freq(100.0e6, 1);
+-}
+-
+-double SoDa::USRPCtrl::getNearestStep(double freq, double offset)
+-{
+-  double ret = freq - offset;
+-
+-  // Without integer-N mode, this is a wash....
+-  if(supports_IntN_Mode) {
+-    if(lo_step_map.find(freq - offset) != lo_step_map.end()) {
+-      ret = lo_step_map[freq - offset]; 
+-    }
+-  }
+-  return ret; 
+-}
+-
+-void SoDa::USRPCtrl::freq_search_message_handler(uhd::msg::type_t type, const std::string & msg)
+-{
+-  switch (type) {
+-  case uhd::msg::status:
+-    // do nothing -- these are the rx freq setting complaints.
+-    break; 
+-  case uhd::msg::error:
+-    std::cerr << "UHD ERROR: " << msg << std::flush;
+-    break;
+-  case uhd::msg::warning:
+-    std::cerr << "UHD WARNING: " << msg << std::flush;
+-    break;
+-  default:
+-    SoDa::USRPCtrl::singleton_ctrl_obj->debugMsg(msg);
+-    break; 
+-  }
+-}
+-
+-void SoDa::USRPCtrl::normal_message_handler(uhd::msg::type_t type, const std::string & msg)
+-{
+-  switch (type) {
+-  case uhd::msg::error:
+-    std::cerr << "UHD ERROR: " << msg << std::flush;
+-    break;
+-  case uhd::msg::warning:
+-    std::cerr << "UHD WARNING: " << msg << std::flush;
+-    break;
+-  default:
+-    SoDa::USRPCtrl::singleton_ctrl_obj->debugMsg(msg);
+-    break; 
+-  }
+-}
+-
+-void SoDa::USRPCtrl::initStepMap()
+-{
+-  supports_IntN_Mode = false;
+-
+-  if(is_B2xx) return;
+-
+-  debugMsg("In initStepMap\n");
+-  
+-  // first, do we have this capability?
+-  // pick a frequency halfway between the min and max freq for this MB.
+-  double tf = (rx_rf_freq_range.stop() + rx_rf_freq_range.start()) * 0.5;
+-  // Now bump it by some silly amount
+-  tf += 123456.789;
+-
+-  debugMsg(boost::format("got tf = %g\n") % tf);
+-  
+-  // and tune with and without intN
+-  uhd::tune_request_t tunreq_int(tf);
+-  uhd::tune_request_t tunreq_frac(tf);
+-  tunreq_int.args = uhd::device_addr_t("mode_n=integer");
+-  uhd::tune_result_t tunres_int, tunres_frac;
+-  tunres_int = usrp->set_rx_freq(tunreq_int); 
+-  tunres_frac = usrp->set_rx_freq(tunreq_frac);
+-  
+-  // are there differences?
+-  if(tunres_int.actual_rf_freq != tunres_frac.actual_rf_freq) {
+-    supports_IntN_Mode = true;
+-  }
+-
+-  debugMsg(boost::format("int rf = %g  frac rf = %g  tf = %g\n")
+-	   % tunres_int.actual_rf_freq % tunres_frac.actual_rf_freq % tf);
+-
+-  if(supports_IntN_Mode) {
+-    debugMsg("Supports INT_N tuning mode.\n");
+-  }
+-  else {
+-    debugMsg("Does not support INT_N tuning mode.\n");
+-  }
+-
+-  // set the message handler for status messages to throw stuff away.
+-  // the driver complains a lot about unsupported settings, but that
+-  // is the whole point of this loop.... so....
+-  uhd::msg::register_handler(freq_search_message_handler);
+-  
+-  // Now sweep from min to max freq, and find the steps along the way.
+-  double ff_incr = 1.0e6; // start with a small step...
+-  double r_st, r_en, target, target2;
+-  r_st = rx_rf_freq_range.start();
+-
+-  // first find the first setting. 
+-  uhd::tune_request_t treq(r_st);
+-  treq.args = uhd::device_addr_t("mode_n=integer");
+-  tunres_int = usrp->set_rx_freq(treq);
+-  target = tunres_int.actual_rf_freq;
+-
+-  // now look through the range
+-  for(double ff = target + ff_incr;
+-      ff < rx_rf_freq_range.stop();
+-      ff += ff_incr) {
+-    uhd::tune_request_t treq(ff);
+-    treq.args = uhd::device_addr_t("mode_n=integer");
+-    tunres_int = usrp->set_rx_freq(treq);
+-    if(target != tunres_int.actual_rf_freq) {
+-      // we found a new one...
+-      lo_step_map[SoDa::Range<double>(r_st, tunres_int.actual_rf_freq)] = target;
+-      r_st = tunres_int.actual_rf_freq;
+-      // ff_incr = (target - r_st) * 0.8;  // this is the step size... ? 
+-      target = r_st;
+-    }
+-    // debugMsg(boost::format("ff = %g   rf = %g\n")
+-    // 	     % ff % tunres_int.actual_rf_freq); 
+-  }
+-
+-  // now go back to the normal handler. 
+-  uhd::msg::register_handler(normal_message_handler);
+-  
+-  if(getDebugLevel() > 2) {
+-    typedef std::pair<SoDa::Range<double>, double> fmap_el;
+-    BOOST_FOREACH( fmap_el const & el, lo_step_map) {
+-      std::cerr << boost::format("Range: %g to %g --- Base: %g\n")
+-	% el.first.getMin() % el.first.getMax() % el.second; 
+-    }
+-  }
+-  
+-  return; 
+-}
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/src/USRPCtrl.hxx soda-3.4.1/src/USRPCtrl.hxx
+--- soda-3.4/src/USRPCtrl.hxx	2014-11-29 01:36:01.000000000 +0000
++++ soda-3.4.1/src/USRPCtrl.hxx	2016-04-27 14:22:54.397500772 +0000
+@@ -41,15 +41,12 @@
+ #include "MultiMBox.hxx"
+ #include "Command.hxx"
+ #include "Params.hxx"
+-#include "RangeMap.hxx"
+-
+ #include <uhd/utils/thread_priority.hpp>
+ #include <uhd/utils/safe_main.hpp>
+ #include <uhd/usrp/multi_usrp.hpp>
+ #include <uhd/usrp/dboard_base.hpp>
+ #include <uhd/types/tune_request.hpp>
+ #include <uhd/types/tune_result.hpp>
+-#include <uhd/utils/msg.hpp>
+
+ namespace SoDa {
+   ///  @class USRPCtrl
+@@ -77,19 +74,6 @@
+     /// RX and TX processes to find the associated USRP widget.
+     /// @return a pointer to the USRP radio object
+     uhd::usrp::multi_usrp::sptr getUSRP() { return usrp; }
+-
+-    /// Temporary message handler, while we're looking for
+-    /// "natural" front-end VCO settings.
+-    static void freq_search_message_handler(uhd::msg::type_t type, const std::string & msg);
+-
+-    /// This is the more permanent message handler... 
+-    static void normal_message_handler(uhd::msg::type_t type, const std::string & msg);
+-
+-    /// This is a singleton object -- the last (and only, we hope) such object
+-    /// to be created sets a static pointer to itself.  This looks pretty gross, but
+-    /// it is necessary to provide context to the error message handlers.
+-    static SoDa::USRPCtrl * singleton_ctrl_obj;
+-    
+   private:
+     Params * params;
+
+@@ -97,7 +81,6 @@
+     /// don't have frontend lock indications (as of 3.7.0)
+     /// and need a special sample rate.
+     bool is_B2xx;
+-    bool is_B210; ///< the B210 has two tx channels -- use the second for a Transverter LO -- see USRPLO
+
+     /// Parse an incoming command and dispatch.
+     /// @param cmd a command record
+@@ -165,12 +148,6 @@
+     /// @param val true to enable the transmitter, false otherwise.
+     void setTXEna(bool val);
+
+-
+-    /// set the transvert LO frequency and power
+-    void setTransverterLOFreqPower(double freq, double power);
+-    void enableTransverterLO();
+-    void disableTransverterLO();
+-    
+     /// we use TX_IO bit 12 to turn on the TX relay
+     /// we use TX_IO bit 11 to monitor the TX relay
+     static const unsigned int TX_RELAY_CTL; ///< mask for RELAY control bit
+@@ -208,27 +185,8 @@
+
+     std::string motherboard_name; ///< The model name of the USRP unit
+
+-    // transverter local oscillator support.
+-    bool tvrt_lo_capable; ///< if true, this unit can implement a local transverter oscillator.
+-    bool tvrt_lo_mode; ///< if true, set the transmit frequency, with some knowledge of the tvrt LO.
+-    double tvrt_lo_gain; ///< output power for the second transmit channel (used for transverter LO)
+-    double tvrt_lo_freq; ///< the frequency of the second transmit channel oscillator
+-    double tvrt_lo_fe_freq; ///< the frequency of the second transmit channel front-end oscillator
+-    
+     // enables verbose messages
+     bool debug_mode; ///< print stuff when we are in debug mode
+-
+-    // integer tuning mode is helped by a map of LO capabilities.
+-
+-    /// @brief getNearestStep returns the nearest integer-N step
+-    /// to the supplied frequency that is at least <offset> Hz below it.
+-    /// @param freq -- target tuning frequency
+-    /// @param offset -- returned frequency will be < freq - offset
+-    double getNearestStep(double freq, double offset = 0.0); 
+-    SoDa::RangeMap<double, double> lo_step_map; /// map from range to bottom of range...rx_rf
+-    /// @brief initialize the step map by probing the LO tuning over the range
+-    void initStepMap();
+-    bool supports_IntN_Mode; 
+   };
+ }
+
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/src/USRPTX.cxx soda-3.4.1/src/USRPTX.cxx
+--- soda-3.4/src/USRPTX.cxx	2014-11-29 01:36:01.000000000 +0000
++++ soda-3.4.1/src/USRPTX.cxx	2016-04-27 14:22:54.397500772 +0000
+@@ -36,14 +36,13 @@
+ #include <fcntl.h>
+ #include <stdio.h>
+
+-SoDa::USRPTX::USRPTX(Params * params, uhd::usrp::multi_usrp::sptr _usrp,
++SoDa::USRPTX::USRPTX(Params * params, uhd::usrp::multi_usrp::sptr usrp,
+ 		     DatMBox * _tx_stream, DatMBox * _cw_env_stream,
+ 		     CmdMBox * _cmd_stream) : SoDa::SoDaThread("USRPTX")
+ {
+   cmd_stream = _cmd_stream;
+   tx_stream = _tx_stream;
+-  cw_env_stream = _cw_env_stream;
+-  usrp = _usrp; 
++  cw_env_stream = _cw_env_stream; 
+
+   // subscribe to the command stream.
+   cmd_subs = cmd_stream->subscribe();
+@@ -52,22 +51,9 @@
+   // and to the CW envelope stream
+   cw_subs = cw_env_stream->subscribe(); 
+
+-  LO_enabled = false;
+-  LO_configured = false;
+-  LO_capable = false;
+-
+   // create the tx buffer streamers.
+-  stream_args = new uhd::stream_args_t("fc32", "sc16");
+-  stream_args->channels.push_back(0);
+-  if(usrp->get_tx_num_channels() > 1) {
+-    debugMsg("This radio is transverter LO capable");
+-    // use the second channel as a transverter LO
+-    stream_args->channels.push_back(1);
+-    LO_capable = true;
+-  }
+-  else {
+-    debugMsg("This radio is NOT transverter LO capable");
+-  }
++  uhd::stream_args_t stream_args("fc32", "sc16"); 
++  tx_bits = usrp->get_tx_stream(stream_args);
+
+   // find out how to configure the transmitter
+   tx_sample_rate = params->getTXRate();
+@@ -83,9 +69,9 @@
+   // we aren't waiting for anything. 
+   waiting_to_run_dry = false; 
+
+-  // build the beacon buffer, and the zero buffer.
++  // build the beacon buffer and the zero buffer.
+   beacon_env = new float[tx_buffer_size];
+-  zero_env = new float[tx_buffer_size];
++  zero_env = new float[tx_buffer_size]; 
+   for(int i = 0; i < tx_buffer_size; i++) {
+     beacon_env[i] = 1.0;
+     zero_env[i] = 0.0; 
+@@ -97,15 +83,11 @@
+   // set the initial envelope amplitude
+   cw_env_amplitude = 0.7;  // more or less sqrt2/2
+   
+-  // build the zero buffer and the transverter lo buffer
++  // build the zero buffer
+   zero_buf = new std::complex<float>[tx_buffer_size];
+-  const_buf = new std::complex<float>[tx_buffer_size];
+-  for(int i = 0; i < tx_buffer_size; i++) {
+-    zero_buf[i] = std::complex<float>(0.0, 0.0);
+-    const_buf[i] = std::complex<float>(1.0, 0.0);
+-  }
++  for(int i = 0; i < tx_buffer_size; i++) zero_buf[i] = std::complex<float>(0.0, 0.0);
+   
+-  tx_enabled = false;
++  tx_enabled = false; 
+ }
+
+
+@@ -119,13 +101,9 @@
+   bool exitflag = false;
+   SoDaBuf * txbuf, * cwenv;
+   Command * cmd; 
+-  std::vector<std::complex<float> *> buffers(LO_capable ? 2 : 1);
+-
++  
+   while(!exitflag) {
+     bool didwork = false; 
+-    if(LO_capable && LO_enabled && LO_configured) buffers[1] = const_buf;
+-    else if(LO_capable) buffers[1] = zero_buf;
+-    
+     if((cmd = cmd_stream->get(cmd_subs)) != NULL) {
+       // process the command.
+       execCommand(cmd);
+@@ -133,66 +111,56 @@
+       exitflag |= (cmd->target == Command::STOP); 
+       cmd_stream->free(cmd); 
+     }
+-    else if(tx_enabled &&
+-	    tx_bits &&
+-	    (tx_modulation != SoDa::Command::CW_L) &&
++    else if((tx_modulation != SoDa::Command::CW_L) &&
+ 	    (tx_modulation != SoDa::Command::CW_U) &&
+ 	    (txbuf = tx_stream->get(tx_subs)) != NULL) {
+       // get a buffer and 
+-      buffers[0] = txbuf->getComplexBuf();
+-      tx_bits->send(buffers, txbuf->getComplexLen(), md);
+-      md.start_of_burst = false; 
+-      didwork = true; 
+-
++      if(tx_enabled) {
++	// no need to upconvert -- we are just doing baseband
++	// TX if and using the DSP and front end oscs to tune
++	// to the exact freq.  
++	// then put it out to the transmitter.
++	tx_bits->send(txbuf->getComplexBuf(), txbuf->getComplexLen(), md);
++	md.start_of_burst = false; 
++	didwork = true; 
++      }
+       // now free the buffer up.
+-      tx_stream->free(txbuf);
++      tx_stream->free(txbuf); 
+     }
+     else if(tx_enabled &&
+-	    tx_bits &&
+ 	    ((tx_modulation != SoDa::Command::CW_L) ||
+ 	     (tx_modulation != SoDa::Command::CW_U)) &&
+ 	    ((cwenv = cw_env_stream->get(cw_subs)) != NULL)) {
+       // modulate a carrier with a constant envelope
+       doCW(cw_buf, cwenv->getFloatBuf(), cwenv->getComplexLen());
+       // now send it to the USRP
+-      buffers[0] = cw_buf;
+-      tx_bits->send(buffers, cwenv->getComplexLen(), md);
++      tx_bits->send(cw_buf, cwenv->getComplexLen(), md);
+       cw_env_stream->free(cwenv);
+       md.start_of_burst = false; 
+       didwork = true; 
+     }
+     else if(tx_enabled && 
+-	    tx_bits &&
+ 	    ((tx_modulation != SoDa::Command::CW_L) ||
+ 	     (tx_modulation != SoDa::Command::CW_U)) &&
+ 	    ((cwenv = cw_env_stream->get(cw_subs)) == NULL)) {
+       // we have an empty CW buffer -- we've run out of text.
+-      doCW(cw_buf, zero_env, tx_buffer_size);
+-      buffers[0] = cw_buf;
+-      tx_bits->send(buffers, tx_buffer_size, md); 
++      doCW(cw_buf, zero_env, tx_buffer_size); 
++      tx_bits->send(cw_buf, tx_buffer_size, md); 
+       // are we supposed to tell anybody about this? 
+       if(waiting_to_run_dry) {
+ 	cmd_stream->put(new Command(Command::REP, Command::TX_CW_EMPTY, 0));
+ 	waiting_to_run_dry = false; 
+       }
+     }
+-    else if(tx_enabled &&
+-	    tx_bits &&
+-	    beacon_mode) {
+-      // modulate a carrier with a constant envelope
+-      doCW(cw_buf, beacon_env, tx_buffer_size);
+-      // now send it to the USRP
+-      buffers[0] = cw_buf;
+-      tx_bits->send(buffers, tx_buffer_size, md);
+-      md.start_of_burst = false; 
+-      didwork = true; 
+-    }
+-    else if(tx_enabled && 
+-	    tx_bits) {
+-      // all other cases -- we still want to send the LO buffer
+-      buffers[0] = zero_buf;
+-      tx_bits->send(buffers, tx_buffer_size, md);
+-      didwork = true; 
++    else if(beacon_mode) {
++      if(tx_enabled) {
++	// modulate a carrier with a constant envelope
++	doCW(cw_buf, beacon_env, tx_buffer_size);
++	// now send it to the USRP
++	tx_bits->send(cw_buf, tx_buffer_size, md);
++	md.start_of_burst = false; 
++	didwork = true; 
++      }
+     }
+
+     if(!didwork) {
+@@ -226,32 +194,16 @@
+     waiting_to_run_dry = false;
+     md.start_of_burst = true;
+     md.end_of_burst = false;
+-    md.has_time_spec = false; 
+     tx_enabled = true; 
+-    getTXStreamer();
+   }
+   else {
+-    if(!tx_enabled && !LO_enabled) return;
+-    if(!LO_enabled) {
+-      // If LO is enabled, we always send SOMETHING....
+-      md.end_of_burst = true;
+-      tx_bits->send(zero_buf, 10, md);
+-    }
++    if(!tx_enabled) return;
++    md.end_of_burst = true;
++    tx_bits->send(zero_buf, 10, md);
+     tx_enabled = false;
+-    if(tx_bits) {
+-      tx_bits->~tx_streamer();
+-    }
+   }
+ }
+
+-void SoDa::USRPTX::getTXStreamer()
+-{
+-  if(tx_bits) {
+-    tx_bits->~tx_streamer(); 
+-  }
+-  tx_bits = usrp->get_tx_stream(*stream_args); 
+-}
+-
+
+ void SoDa::USRPTX::execSetCommand(Command * cmd)
+ {
+@@ -278,14 +230,6 @@
+   case Command::TX_CW_EMPTY:
+     waiting_to_run_dry = true; 
+     break;
+-  case SoDa::Command::TVRT_LO_ENABLE:
+-    debugMsg("Enable Transverter LO");
+-    LO_enabled = true; 
+-    break; 
+-  case SoDa::Command::TVRT_LO_DISABLE:
+-    debugMsg("Disable Transverter LO");
+-    LO_enabled = false; 
+-    break;
+   default:
+     break; 
+   }
+@@ -304,13 +248,5 @@
+
+ void SoDa::USRPTX::execRepCommand(Command * cmd)
+ {
+-  switch(cmd->target) {
+-  case SoDa::Command::TVRT_LO_CONFIG:
+-    debugMsg("LO configured");
+-    LO_configured = true; 
+-    break;
+-  default:
+-    break;
+-  }
+ }
+
+diff -Naur --suppress-common-lines --suppress-blank-empty soda-3.4/src/USRPTX.hxx soda-3.4.1/src/USRPTX.hxx
+--- soda-3.4/src/USRPTX.hxx	2014-11-29 01:36:01.000000000 +0000
++++ soda-3.4.1/src/USRPTX.hxx	2016-04-27 14:22:54.397500772 +0000
+@@ -60,7 +60,7 @@
+      * @param _cmd_stream command stream
+      *
+      */
+-    USRPTX(Params * params, uhd::usrp::multi_usrp::sptr _usrp,
++    USRPTX(Params * params, uhd::usrp::multi_usrp::sptr usrp,
+ 	   DatMBox * _tx_stream, DatMBox * _cw_env_stream,
+ 	   CmdMBox * _cmd_stream);
+     /**
+@@ -68,9 +68,6 @@
+      */
+     void run(); 
+   private:
+-
+-    uhd::usrp::multi_usrp::sptr usrp; ///< the radio.
+-    
+     /**
+      * @brief start/stop transmit stream
+      * @param tx_on if true, go into transmit mode
+@@ -78,11 +75,6 @@
+     void transmitSwitch(bool tx_on);
+
+     /**
+-     * @brief setup transmit streamer.
+-     */
+-    void getTXStreamer();
+-    
+-    /**
+      * @brief execute GET commands from the command channel
+      * @param cmd the incoming command
+      */
+@@ -146,17 +138,8 @@
+     
+     bool waiting_to_run_dry; ///< When set, we should send out a report when we run out of CW buffer
+     
+-    uhd::stream_args_t * stream_args;
+     uhd::tx_streamer::sptr tx_bits; ///< USRP (UHD) transmit stream handle
+     uhd::tx_metadata_t md; ///< metadata describing USRP transmit buffer
+-
+-    // transverter local oscillator support
+-    bool LO_enabled; ///< if true, we're in local transverter mode
+-    bool LO_configured; ///< if true, the LO has had its gain/freq set.
+-    bool LO_capable; ///< if true, this hardware model supports LO config
+-
+-    std::complex<float> * const_buf; ///< envelope for dead silence
+-
+   }; 
+
+ }
